@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  SALES
+  MARKETING
+  EXECUTIVE
+}
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+enum InteractionType {
+  EMAIL
+  CALL
+  MEETING
+  NOTE
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  firstName     String?
+  lastName      String?
+  role          UserRole       @default(SALES)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  leads         Lead[]
+  interactions  Interaction[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+}
+
+model Lead {
+  id                    String        @id @default(uuid())
+  firstName             String
+  lastName              String
+  email                 String
+  phone                 String?
+  company               String?
+  source                String?
+  stage                 LeadStage     @default(NEW)
+  score                 Float?
+  conversionProbability Float?
+  notes                 String?
+  ownerId               String
+  owner                 User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  interactions          Interaction[]
+  consentDate           DateTime?
+  dataOrigin            String?
+  isAnonymized          Boolean       @default(false)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  @@index([ownerId])
+  @@index([email])
+  @@index([stage])
+}
+
+model Interaction {
+  id        String          @id @default(uuid())
+  type      InteractionType
+  content   String
+  leadId    String
+  lead      Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime        @default(now())
+
+  @@index([leadId])
+  @@index([userId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action     String
+  entityType String
+  entityId   String
+  oldValue   Json?
+  newValue   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([entityId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  content   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
