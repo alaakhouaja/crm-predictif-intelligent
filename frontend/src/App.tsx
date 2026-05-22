@@ -7,14 +7,16 @@ import { UsersPage } from './pages/UsersPage';
 import { PipelineView } from './pages/PipelineView';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { AppLayout } from './components/AppLayout';
 import './App.css';
 
 function defaultPath(role?: string) {
-  if (!role) return '/leads';
-  if (role === 'ADMIN') return '/users';
-  if (role === 'SALES') return '/pipeline';
-  return '/leads';
+  if (!role) return '/dashboard';
+  if (role === 'ADMIN') return '/dashboard';
+  if (role === 'SALES') return '/dashboard';
+  if (role === 'EXECUTIVE') return '/dashboard';
+  return '/dashboard';
 }
 
 function Protected({ children, roles }: { children: ReactNode, roles?: string[] }) {
@@ -80,6 +82,14 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
+      <Route
+        path="/dashboard"
+        element={
+          <Protected>
+            <DashboardPage />
+          </Protected>
+        }
+      />
       <Route
         path="/leads"
         element={

@@ -25,21 +25,33 @@ export function AppLayout({ children }: LayoutProps) {
   const navItems = (() => {
     if (user?.role === 'ADMIN') {
       return [
-        { label: 'Utilisateurs', path: '/users', icon: Users },
-        { label: 'Leads', path: '/leads', icon: LayoutDashboard },
+        { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+        { label: 'Leads', path: '/leads', icon: Users },
         { label: 'Pipeline', path: '/pipeline', icon: Kanban },
+        { label: 'Utilisateurs', path: '/users', icon: Users },
       ];
     }
     if (user?.role === 'SALES') {
       return [
-        { label: 'Mes leads', path: '/leads', icon: LayoutDashboard },
+        { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+        { label: 'Mes leads', path: '/leads', icon: Users },
         { label: 'Mon pipeline', path: '/pipeline', icon: Kanban },
       ];
     }
     if (user?.role === 'MARKETING') {
-      return [{ label: 'Leads entrants', path: '/leads', icon: LayoutDashboard }];
+      return [
+        { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+        { label: 'Leads entrants', path: '/leads', icon: Users },
+      ];
     }
-    return [{ label: 'Dashboard', path: '/leads', icon: LayoutDashboard }];
+    if (user?.role === 'EXECUTIVE') {
+      return [
+        { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+        { label: 'Leads', path: '/leads', icon: Users },
+        { label: 'Pipeline', path: '/pipeline', icon: Kanban },
+      ];
+    }
+    return [{ label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard }];
   })();
 
   useEffect(() => {

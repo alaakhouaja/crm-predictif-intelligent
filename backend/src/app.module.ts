@@ -7,6 +7,7 @@ import { InteractionsModule } from './interactions/interactions.module';
 import { UsersModule } from './users/users.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { PrismaModule } from './prisma/prisma.module';
     InteractionsModule,
     UsersModule,
     NotificationsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
 })
