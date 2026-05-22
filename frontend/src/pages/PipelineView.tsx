@@ -201,7 +201,7 @@ export function PipelineView() {
         <div className="row-gap">
           <button
             className="secondary small"
-            onClick={() => void loadLeads(false)}
+            onClick={() => window.location.reload()}
             disabled={!!savingId}
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />{' '}

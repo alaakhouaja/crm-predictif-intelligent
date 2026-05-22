@@ -123,7 +123,7 @@ export function UsersPage() {
           <h1>Utilisateurs</h1>
         </div>
         <div className="row-gap">
-          <button type="button" className="secondary small" onClick={() => void load()}>
+          <button type="button" className="secondary small" onClick={() => window.location.reload()}>
             Actualiser
           </button>
           <button type="button" className="primary" onClick={openCreate}>

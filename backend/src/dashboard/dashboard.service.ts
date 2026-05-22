@@ -38,7 +38,7 @@ export class DashboardService {
       lost,
       conversionRate,
       closed,
-      avgScore: avgScore._avg.score ? Math.round(avgScore._avg.score * 10) / 10 : null,
+      avgScore: avgScore._avg.score !== null ? Math.round(avgScore._avg.score * 10) / 10 : null,
     };
   }
 

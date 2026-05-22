@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
   Users, 
@@ -8,7 +8,9 @@ import {
   Search,
   ChevronRight,
   ChevronDown,
-  BrainCircuit
+  BrainCircuit,
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 
@@ -19,7 +21,9 @@ interface LayoutProps {
 export function AppLayout({ children }: LayoutProps) {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const navItems = (() => {
@@ -131,10 +135,48 @@ export function AppLayout({ children }: LayoutProps) {
               <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
               <input 
                 type="text" 
-                placeholder="Rechercher un client, une note..." 
-                style={{ paddingLeft: '48px', width: '100%', border: 'none', background: '#f1f5f9' }}
+                placeholder="Rechercher un client, une note..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchQuery.trim()) {
+                    navigate(`/leads?search=${encodeURIComponent(searchQuery.trim())}`);
+                    setSearchQuery('');
+                  }
+                }}
+                style={{ paddingLeft: '48px', paddingRight: searchQuery ? '40px' : '16px', width: '100%', border: 'none', background: '#f1f5f9', color: '#0f172a' }}
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#64748b',
+                    padding: '2px',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
+            <button
+              type="button"
+              className="secondary small"
+              onClick={() => window.location.reload()}
+              style={{ marginLeft: '8px', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px' }}
+              title="Actualiser"
+            >
+              <RefreshCw size={14} />
+            </button>
           </div>
 
           <div className="header-right" ref={menuRef}>

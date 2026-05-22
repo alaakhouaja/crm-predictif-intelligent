@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useSearchParams } from 'react-router-dom';
 import { 
   Plus, 
   RefreshCw, 
   FileUp, 
   BrainCircuit, 
-  Search, 
+  Search as SearchIcon, 
   UserPlus,
   TrendingUp,
   Target,
@@ -38,12 +39,13 @@ const interactionTypes: InteractionType[] = ['EMAIL', 'CALL', 'MEETING', 'NOTE']
 
 export function LeadsPage() {
   const { token, user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [totalLeads, setTotalLeads] = useState(0);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [filter] = useState<LeadStage | ''>('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchParams.get('search') || '');
   const [showArchived, setShowArchived] = useState(false);
   const [, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -280,6 +282,14 @@ export function LeadsPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const urlSearch = searchParams.get('search') || '';
+    if (urlSearch !== search) {
+      setSearch(urlSearch);
+      setPage(1);
+    }
+  }, [searchParams, search]);
+
   const canCreateLead = user?.role === 'ADMIN' || user?.role === 'SALES' || user?.role === 'MARKETING';
   const canEditLead = user?.role === 'ADMIN' || user?.role === 'SALES' || user?.role === 'MARKETING';
   const canEditCommercial = user?.role === 'ADMIN' || user?.role === 'SALES';
@@ -434,7 +444,7 @@ export function LeadsPage() {
       {/* Header with quick actions */}
       <div className="flex-between" style={{ marginBottom: '2rem' }}>
         <div className="row-gap">
-          <button className="secondary small" onClick={() => void load()}>
+          <button className="secondary small" onClick={() => window.location.reload()}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
           <button
@@ -555,7 +565,7 @@ export function LeadsPage() {
                   </button>
                 )}
                 <div style={{ position: 'relative' }}>
-                  <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <SearchIcon size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                   <input 
                     type="search" 
                     placeholder="Filtrer..." 

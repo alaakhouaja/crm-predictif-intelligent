@@ -162,7 +162,7 @@ export function SettingsPage() {
             <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1.25rem' }}>
               <div className="muted small">Compte : {displayName}</div>
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <button className="secondary" type="button" onClick={() => void refreshMe()} disabled={!token}>
+                <button className="secondary" type="button" onClick={() => window.location.reload()} disabled={!token}>
                   Actualiser le profil
                 </button>
                 <button className="secondary" type="button" onClick={logout}>
