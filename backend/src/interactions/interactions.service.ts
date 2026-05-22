@@ -23,11 +23,11 @@ export class InteractionsService {
   }
 
   private canSeeAllWrite(user: AuthUser) {
-    return (
-      user.role === UserRole.ADMIN ||
-      user.role === UserRole.EXECUTIVE ||
-      user.role === UserRole.MARKETING
-    );
+    return user.role === UserRole.ADMIN;
+  }
+
+  private canCreate(user: AuthUser) {
+    return user.role === UserRole.ADMIN || user.role === UserRole.SALES;
   }
 
   private readonly include = {
@@ -43,6 +43,9 @@ export class InteractionsService {
   };
 
   async create(user: AuthUser, dto: CreateInteractionDto) {
+    if (!this.canCreate(user)) {
+      throw new ForbiddenException('You are not allowed to create interactions');
+    }
     // Vérifier que le lead existe
     const lead = await this.prisma.lead.findUnique({
       where: { id: dto.leadId },

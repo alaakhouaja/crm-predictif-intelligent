@@ -40,7 +40,7 @@ function emptyGroups(): Record<LeadStage, Lead[]> {
 }
 
 export function PipelineView() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -52,6 +52,8 @@ export function PipelineView() {
   const [minScore, setMinScore] = useState('');
   const [onlyWithCompany, setOnlyWithCompany] = useState(false);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+
+  const canMoveLeads = user?.role === 'ADMIN' || user?.role === 'SALES';
 
   const loadLeads = useCallback(
     async (silent = false) => {
@@ -116,6 +118,7 @@ export function PipelineView() {
   }, [filteredLeads]);
 
   function onDragStart(leadId: string) {
+    if (!canMoveLeads) return;
     setDraggedLeadId(leadId);
     setError(null);
   }
@@ -126,6 +129,7 @@ export function PipelineView() {
   }
 
   async function moveLeadToStage(destStage: LeadStage) {
+    if (!canMoveLeads) return;
     if (!draggedLeadId) return;
     const lead = leads.find((item) => item.id === draggedLeadId);
     if (!lead) {
@@ -207,6 +211,19 @@ export function PipelineView() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />{' '}
             Actualiser
           </button>
+          {!canMoveLeads ? (
+            <span
+              className="badge x-small"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                color: 'var(--text-muted)',
+                padding: '4px 8px',
+                borderRadius: '10px',
+              }}
+            >
+              Lecture seule
+            </span>
+          ) : null}
           <button
             className="secondary small"
             onClick={() => setFiltersOpen((prev) => !prev)}
@@ -339,15 +356,18 @@ export function PipelineView() {
               }}
               onDragOver={(e) => {
                 e.preventDefault();
+                if (!canMoveLeads) return;
                 if (!draggedLeadId) return;
                 setDragOverStage(stage);
               }}
               onDragEnter={(e) => {
                 e.preventDefault();
+                if (!canMoveLeads) return;
                 if (!draggedLeadId) return;
                 setDragOverStage(stage);
               }}
               onDragLeave={(e) => {
+                if (!canMoveLeads) return;
                 const current = e.currentTarget;
                 const related = e.relatedTarget as Node | null;
                 if (!related || !current.contains(related)) {
@@ -356,6 +376,7 @@ export function PipelineView() {
               }}
               onDrop={(e) => {
                 e.preventDefault();
+                if (!canMoveLeads) return;
                 void moveLeadToStage(stage);
               }}
             >
@@ -365,9 +386,9 @@ export function PipelineView() {
                   className={`kanban-card${
                     draggedLeadId === lead.id ? ' dragging' : ''
                   }`}
-                  draggable={savingId !== lead.id}
-                  onDragStart={() => onDragStart(lead.id)}
-                  onDragEnd={onDragEnd}
+                  draggable={canMoveLeads && savingId !== lead.id}
+                  onDragStart={canMoveLeads ? () => onDragStart(lead.id) : undefined}
+                  onDragEnd={canMoveLeads ? onDragEnd : undefined}
                   style={{
                     borderColor:
                       draggedLeadId === lead.id

@@ -101,7 +101,7 @@ function AppRoutes() {
       <Route
         path="/pipeline"
         element={
-          <Protected roles={['ADMIN', 'SALES']}>
+          <Protected roles={['ADMIN', 'SALES', 'EXECUTIVE']}>
             <PipelineView />
           </Protected>
         }
