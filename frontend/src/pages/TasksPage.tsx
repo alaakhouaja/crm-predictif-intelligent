@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, X, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
+import { Plus, X, CheckCircle2, AlertTriangle, Clock, Pencil, Ban } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import type { PaginatedResponse, Task, TaskPriority, TaskStatus, TaskType } from '../types';
+import type { AuthUser, PaginatedResponse, Task, TaskPriority, TaskStatus, TaskType } from '../types';
 
 const statuses: TaskStatus[] = ['OPEN', 'DONE', 'CANCELED'];
 const priorities: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
@@ -20,8 +20,10 @@ export function TasksPage() {
   const [filterStatus, setFilterStatus] = useState<TaskStatus | ''>('');
   const [filterType, setFilterType] = useState<TaskType | ''>('');
   const [filterOverdue, setFilterOverdue] = useState(false);
+  const [search, setSearch] = useState('');
 
   const canCreate = user?.role !== 'EXECUTIVE';
+  const isAdmin = user?.role === 'ADMIN';
 
   const lockedType = useMemo<TaskType | null>(() => {
     if (user?.role === 'MARKETING') return 'MARKETING';
@@ -29,12 +31,25 @@ export function TasksPage() {
     return null;
   }, [user?.role]);
 
+  const [users, setUsers] = useState<AuthUser[]>([]);
+
   const [modalOpen, setModalOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<TaskType>('SALES');
   const [priority, setPriority] = useState<TaskPriority>('MEDIUM');
   const [dueDate, setDueDate] = useState('');
+  const [assignedToId, setAssignedToId] = useState('');
+
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Task | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editType, setEditType] = useState<TaskType>('SALES');
+  const [editPriority, setEditPriority] = useState<TaskPriority>('MEDIUM');
+  const [editStatus, setEditStatus] = useState<TaskStatus>('OPEN');
+  const [editDueDate, setEditDueDate] = useState('');
+  const [editAssignedToId, setEditAssignedToId] = useState('');
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -47,6 +62,7 @@ export function TasksPage() {
       if (filterStatus) params.set('status', filterStatus);
       if (filterType) params.set('type', filterType);
       if (filterOverdue) params.set('overdue', 'true');
+      if (search.trim()) params.set('search', search.trim());
 
       const res = await api<PaginatedResponse<Task>>(`/tasks?${params.toString()}`, { token });
       if (res) {
@@ -58,11 +74,26 @@ export function TasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterOverdue, filterStatus, filterType, page, token]);
+  }, [filterOverdue, filterStatus, filterType, page, search, token]);
+
+  const loadUsers = useCallback(async () => {
+    if (!token || !isAdmin) return;
+    try {
+      const res = await api<PaginatedResponse<AuthUser>>('/users?page=1&limit=200', { token });
+      if (res?.data) setUsers(res.data);
+      else setUsers([]);
+    } catch {
+      setUsers([]);
+    }
+  }, [isAdmin, token]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
 
   useEffect(() => {
     if (lockedType) setType(lockedType);
@@ -75,6 +106,7 @@ export function TasksPage() {
     setPriority('MEDIUM');
     setDueDate('');
     setType(lockedType ?? 'SALES');
+    setAssignedToId('');
     setModalOpen(true);
   }
 
@@ -92,12 +124,58 @@ export function TasksPage() {
           type: lockedType ?? type,
           priority,
           dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
+          assignedToId: isAdmin && assignedToId ? assignedToId : undefined,
         }),
       });
       setModalOpen(false);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Création impossible');
+    }
+  }
+
+  function canUpdate(t: Task) {
+    if (!user || user.role === 'EXECUTIVE') return false;
+    if (user.role === 'ADMIN') return true;
+    return t.createdById === user.id || t.assignedToId === user.id;
+  }
+
+  function openEdit(t: Task) {
+    if (!canUpdate(t)) return;
+    setEditing(t);
+    setEditTitle(t.title);
+    setEditDescription(t.description ?? '');
+    setEditType(t.type);
+    setEditPriority(t.priority);
+    setEditStatus(t.status);
+    setEditDueDate(t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 16) : '');
+    setEditAssignedToId(t.assignedToId ?? '');
+    setEditModalOpen(true);
+  }
+
+  async function onUpdate(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !editing) return;
+    setError(null);
+    try {
+      await api<Task>(`/tasks/${editing.id}`, {
+        method: 'PATCH',
+        token,
+        body: JSON.stringify({
+          title: editTitle,
+          description: editDescription || undefined,
+          type: lockedType ?? editType,
+          priority: editPriority,
+          status: editStatus,
+          dueDate: editDueDate ? new Date(editDueDate).toISOString() : undefined,
+          assignedToId: isAdmin && editAssignedToId ? editAssignedToId : undefined,
+        }),
+      });
+      setEditModalOpen(false);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Modification impossible');
     }
   }
 
@@ -108,6 +186,20 @@ export function TasksPage() {
         method: 'PATCH',
         token,
         body: JSON.stringify({ status: 'DONE' }),
+      });
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Mise à jour impossible');
+    }
+  }
+
+  async function cancelTask(task: Task) {
+    if (!token) return;
+    try {
+      await api<Task>(`/tasks/${task.id}`, {
+        method: 'PATCH',
+        token,
+        body: JSON.stringify({ status: 'CANCELED' }),
       });
       await load();
     } catch (err) {
@@ -153,6 +245,17 @@ export function TasksPage() {
       <section className="card" style={{ padding: '1.5rem' }}>
         <div className="flex-between" style={{ marginBottom: '1rem' }}>
           <div className="row-gap">
+            <div style={{ minWidth: '260px' }}>
+              <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                Recherche
+              </div>
+              <input
+                type="search"
+                placeholder="Titre ou description..."
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              />
+            </div>
             <div>
               <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.25rem' }}>
                 Statut
@@ -211,6 +314,7 @@ export function TasksPage() {
                 <th>Titre</th>
                 <th>Type</th>
                 <th>Priorité</th>
+                {(isAdmin || user?.role === 'EXECUTIVE') && <th>Assigné</th>}
                 <th>Échéance</th>
                 <th>Statut</th>
                 <th>Actions</th>
@@ -240,6 +344,13 @@ export function TasksPage() {
                         {t.priority}
                       </span>
                     </td>
+                    {(isAdmin || user?.role === 'EXECUTIVE') && (
+                      <td className="small text-muted">
+                        {t.assignedTo
+                          ? `${t.assignedTo.firstName ?? ''} ${t.assignedTo.lastName ?? ''}`.trim() || t.assignedTo.email
+                          : '—'}
+                      </td>
+                    )}
                     <td className="small text-muted">
                       {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
                     </td>
@@ -247,11 +358,23 @@ export function TasksPage() {
                       <span className={`badge ${statusBadge(t.status)}`}>{t.status}</span>
                     </td>
                     <td>
-                      {user?.role !== 'EXECUTIVE' && t.status === 'OPEN' && (
-                        <button className="secondary small" onClick={() => void markDone(t)} style={{ padding: '0.4rem 0.6rem' }}>
-                          <CheckCircle2 size={14} /> Terminer
-                        </button>
-                      )}
+                      <div className="row-gap">
+                        {canUpdate(t) && (
+                          <button className="secondary small" onClick={() => openEdit(t)} style={{ padding: '0.4rem 0.6rem' }}>
+                            <Pencil size={14} /> Éditer
+                          </button>
+                        )}
+                        {canUpdate(t) && t.status === 'OPEN' && (
+                          <>
+                            <button className="secondary small" onClick={() => void markDone(t)} style={{ padding: '0.4rem 0.6rem' }}>
+                              <CheckCircle2 size={14} /> Terminer
+                            </button>
+                            <button className="secondary small" onClick={() => void cancelTask(t)} style={{ padding: '0.4rem 0.6rem' }}>
+                              <Ban size={14} /> Annuler
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </motion.tr>
                 );
@@ -338,6 +461,20 @@ export function TasksPage() {
                   <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
                 </div>
 
+                {isAdmin && (
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Assigné à</label>
+                    <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)}>
+                      <option value="">Moi-même</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email} ({u.role})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div style={{ gridColumn: 'span 2', display: 'flex', gap: '1rem', marginTop: '0.75rem' }}>
                   <button type="submit" className="primary" style={{ flex: 1 }}>Créer</button>
                   <button type="button" className="secondary" style={{ flex: 1 }} onClick={() => setModalOpen(false)}>Annuler</button>
@@ -347,7 +484,100 @@ export function TasksPage() {
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {editModalOpen && editing && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="card"
+              style={{ width: '100%', maxWidth: '650px', padding: '2.5rem' }}
+            >
+              <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
+                <h2 style={{ margin: 0 }}>Modifier tâche</h2>
+                <button
+                  onClick={() => { setEditModalOpen(false); setEditing(null); }}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)' }}
+                >
+                  <X />
+                </button>
+              </div>
+
+              <form onSubmit={onUpdate} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Titre</label>
+                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+                </div>
+
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Description</label>
+                  <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} style={{ minHeight: '90px' }} />
+                </div>
+
+                <div className="form-group">
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Type</label>
+                  <select value={lockedType ?? editType} onChange={(e) => setEditType(e.target.value as TaskType)} disabled={!!lockedType}>
+                    {types.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Priorité</label>
+                  <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as TaskPriority)}>
+                    {priorities.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Statut</label>
+                  <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as TaskStatus)}>
+                    {statuses.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Échéance</label>
+                  <input type="datetime-local" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
+                </div>
+
+                {isAdmin && (
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Assigné à</label>
+                    <select value={editAssignedToId} onChange={(e) => setEditAssignedToId(e.target.value)}>
+                      <option value="">Non assigné</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email} ({u.role})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div style={{ gridColumn: 'span 2', display: 'flex', gap: '1rem', marginTop: '0.75rem' }}>
+                  <button type="submit" className="primary" style={{ flex: 1 }}>Sauvegarder</button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    style={{ flex: 1 }}
+                    onClick={() => { setEditModalOpen(false); setEditing(null); }}
+                  >
+                    Fermer
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
-

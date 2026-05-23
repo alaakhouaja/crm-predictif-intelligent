@@ -322,6 +322,11 @@ export function LeadsPage() {
   const canExportAiDataset = user?.role === 'ADMIN' || user?.role === 'EXECUTIVE';
   const canAddInteraction = user?.role === 'ADMIN' || user?.role === 'SALES';
   const canAddTask = user?.role === 'ADMIN' || user?.role === 'SALES' || user?.role === 'MARKETING';
+  const canUpdateTask = (t: Task) => {
+    if (!user || user.role === 'EXECUTIVE') return false;
+    if (user.role === 'ADMIN') return true;
+    return t.createdById === user.id || t.assignedToId === user.id;
+  };
 
   useEffect(() => {
     if (selectedLead) {
@@ -950,9 +955,17 @@ export function LeadsPage() {
                                 <span className={`badge ${t.type === 'MARKETING' ? 'badge-orange' : 'badge-blue'}`} style={{ fontSize: '0.6rem' }}>
                                   {t.type}
                                 </span>
-                                <span className="text-muted x-small">
-                                  {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
-                                </span>
+                                <div className="flex-center" style={{ gap: '0.5rem' }}>
+                                  <span className={`badge ${
+                                    t.status === 'DONE' ? 'badge-green' :
+                                    t.status === 'CANCELED' ? 'badge-red' : 'badge-blue'
+                                  }`} style={{ fontSize: '0.6rem' }}>
+                                    {t.status}
+                                  </span>
+                                  <span className="text-muted x-small">
+                                    {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
+                                  </span>
+                                </div>
                               </div>
                               <div className="flex-between" style={{ gap: '0.75rem' }}>
                                 <div style={{ fontSize: '0.85rem', lineHeight: '1.5', color: 'var(--text-main)', fontWeight: 600 }}>
@@ -961,7 +974,7 @@ export function LeadsPage() {
                                     {t.title}
                                   </span>
                                 </div>
-                                {user?.role !== 'EXECUTIVE' && t.status === 'OPEN' && (
+                                {canUpdateTask(t) && t.status === 'OPEN' && (
                                   <button className="secondary small" onClick={() => void markTaskDone(t.id)} style={{ padding: '0.3rem 0.6rem' }}>
                                     <CheckCircle size={14} /> Fait
                                   </button>

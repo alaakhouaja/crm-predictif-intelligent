@@ -48,6 +48,7 @@ export class TasksController {
   @ApiQuery({ name: 'assignedToId', required: false })
   @ApiQuery({ name: 'status', enum: TaskStatus, required: false })
   @ApiQuery({ name: 'type', enum: TaskType, required: false })
+  @ApiQuery({ name: 'search', required: false, type: String })
   @ApiQuery({ name: 'overdue', required: false, type: String })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -58,6 +59,7 @@ export class TasksController {
     @Query('assignedToId') assignedToId?: string,
     @Query('status') status?: TaskStatus,
     @Query('type') type?: TaskType,
+    @Query('search') search?: string,
     @Query('overdue') overdue?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
@@ -67,6 +69,7 @@ export class TasksController {
       assignedToId,
       status,
       type,
+      search,
       overdue,
       page,
       limit,
@@ -99,4 +102,3 @@ export class TasksController {
     return this.tasks.remove(user, id);
   }
 }
-

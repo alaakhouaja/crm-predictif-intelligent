@@ -172,6 +172,7 @@ export class TasksService {
       assignedToId?: string;
       status?: TaskStatus;
       type?: TaskType;
+      search?: string;
       overdue?: string;
       page?: number;
       limit?: number;
@@ -184,6 +185,7 @@ export class TasksService {
       assignedToId,
       status,
       type,
+      search,
       overdue,
       page = 1,
       limit = 10,
@@ -200,31 +202,48 @@ export class TasksService {
       throw new ForbiddenException('You can only query your own tasks');
     }
 
-    const where: Prisma.TaskWhereInput = {};
-    if (leadId) where.leadId = leadId;
-    if (assignedToId) where.assignedToId = assignedToId;
-    if (status) where.status = status;
-    if (type) where.type = type;
+    const and: Prisma.TaskWhereInput[] = [];
+    if (leadId) and.push({ leadId });
+    if (assignedToId) and.push({ assignedToId });
+    if (type) and.push({ type });
+
     if (overdue === 'true') {
-      where.status = TaskStatus.OPEN;
-      where.dueDate = { lt: new Date() };
+      and.push({ status: TaskStatus.OPEN, dueDate: { lt: new Date() } });
+    } else if (status) {
+      and.push({ status });
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      and.push({
+        OR: [
+          { title: { contains: q, mode: 'insensitive' } },
+          { description: { contains: q, mode: 'insensitive' } },
+        ],
+      });
     }
 
     if (!this.canReadAll(user)) {
       if (user.role === UserRole.MARKETING) {
-        where.OR = [
-          { type: TaskType.MARKETING },
-          { assignedToId: user.id },
-          { createdById: user.id },
-        ];
+        and.push({
+          OR: [
+            { type: TaskType.MARKETING },
+            { assignedToId: user.id },
+            { createdById: user.id },
+          ],
+        });
       } else {
-        where.OR = [
-          { assignedToId: user.id },
-          { createdById: user.id },
-          { lead: { ownerId: user.id } },
-        ];
+        and.push({
+          OR: [
+            { assignedToId: user.id },
+            { createdById: user.id },
+            { lead: { ownerId: user.id } },
+          ],
+        });
       }
     }
+
+    const where: Prisma.TaskWhereInput = and.length ? { AND: and } : {};
 
     const p = Math.max(1, Number(page) || 1);
     const l = Math.max(1, Number(limit) || 10);
