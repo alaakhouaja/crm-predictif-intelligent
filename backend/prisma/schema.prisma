@@ -67,6 +67,7 @@ model User {
   notifications Notification[]
   tasksAssigned Task[]         @relation("AssignedTasks")
   tasksCreated  Task[]         @relation("CreatedTasks")
+  taskAttachments TaskAttachment[]
 }
 
 model Lead {
@@ -127,6 +128,8 @@ model Task {
   createdById       String
   createdBy         User         @relation("CreatedTasks", fields: [createdById], references: [id], onDelete: Cascade)
   overdueNotifiedAt DateTime?
+  reminderNotifiedAt DateTime?
+  attachments       TaskAttachment[]
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -135,6 +138,22 @@ model Task {
   @@index([createdById])
   @@index([status])
   @@index([dueDate])
+}
+
+model TaskAttachment {
+  id           String   @id @default(uuid())
+  taskId       String
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  originalName String
+  mimeType     String
+  size         Int
+  storagePath  String
+  createdAt    DateTime @default(now())
+
+  @@index([taskId])
+  @@index([uploadedById])
 }
 
 model AuditLog {

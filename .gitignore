@@ -12,6 +12,7 @@ node_modules/
 backend/dist/
 frontend/dist/
 backend/.nest/
+backend/uploads/
 
 # Prisma
 backend/generated/

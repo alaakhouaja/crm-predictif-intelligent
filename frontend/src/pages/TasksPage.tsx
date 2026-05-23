@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, X, CheckCircle2, AlertTriangle, Clock, Pencil, Ban } from 'lucide-react';
+import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd';
+import { Plus, X, CheckCircle2, AlertTriangle, Clock, Pencil, Ban, Kanban, List, Paperclip, Activity } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import type { AuthUser, PaginatedResponse, Task, TaskPriority, TaskStatus, TaskType } from '../types';
+import type { AuditLogEntry, AuthUser, PaginatedResponse, Task, TaskAttachment, TaskPriority, TaskStatus, TaskType } from '../types';
 
 const statuses: TaskStatus[] = ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELED'];
 const priorities: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
@@ -11,15 +12,18 @@ const types: TaskType[] = ['SALES', 'MARKETING', 'SUPPORT', 'CALL', 'MEETING', '
 
 type SortBy = '' | 'priority' | 'dueDate' | 'status' | 'progress' | 'createdAt';
 type SortDir = 'asc' | 'desc';
+type ViewMode = 'table' | 'kanban';
 
 export function TasksPage() {
   const { token, user } = useAuth();
+  const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
   const [tasks, setTasks] = useState<Task[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [, setLoading] = useState(true);
 
+  const [view, setView] = useState<ViewMode>('table');
   const [filterStatus, setFilterStatus] = useState<TaskStatus | ''>('');
   const [filterType, setFilterType] = useState<TaskType | ''>('');
   const [filterOverdue, setFilterOverdue] = useState(false);
@@ -58,6 +62,9 @@ export function TasksPage() {
   const [editProgress, setEditProgress] = useState(0);
   const [editDueDate, setEditDueDate] = useState('');
   const [editAssignedToId, setEditAssignedToId] = useState('');
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [activityLogs, setActivityLogs] = useState<AuditLogEntry[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const [stats, setStats] = useState<{ total: number; completed: number; overdue: number; highPriority: number } | null>(null);
 
@@ -67,8 +74,9 @@ export function TasksPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set('page', String(page));
-      params.set('limit', '10');
+      const effectivePage = view === 'kanban' ? 1 : page;
+      params.set('page', String(effectivePage));
+      params.set('limit', view === 'kanban' ? '200' : '10');
       if (filterStatus) params.set('status', filterStatus);
       if (filterType) params.set('type', filterType);
       if (filterOverdue) params.set('overdue', 'true');
@@ -79,14 +87,14 @@ export function TasksPage() {
       const res = await api<PaginatedResponse<Task>>(`/tasks?${params.toString()}`, { token });
       if (res) {
         setTasks(res.data);
-        setLastPage(res.lastPage);
+        setLastPage(view === 'kanban' ? 1 : res.lastPage);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur chargement');
     } finally {
       setLoading(false);
     }
-  }, [filterOverdue, filterStatus, filterType, page, search, sortBy, sortDir, token]);
+  }, [filterOverdue, filterStatus, filterType, page, search, sortBy, sortDir, token, view]);
 
   const loadStats = useCallback(async () => {
     if (!token) return;
@@ -114,6 +122,37 @@ export function TasksPage() {
     }
   }, [isAdmin, token]);
 
+  const loadTaskDetails = useCallback(async (taskId: string) => {
+    if (!token) return;
+    try {
+      const t = await api<Task>(`/tasks/${taskId}`, { token });
+      setEditing(t);
+      setAttachments(t.attachments ?? []);
+    } catch {
+      setAttachments([]);
+    }
+  }, [token]);
+
+  const loadActivity = useCallback(async (taskId: string) => {
+    if (!token) return;
+    try {
+      const logs = await api<AuditLogEntry[]>(`/tasks/${taskId}/activity`, { token });
+      setActivityLogs(logs ?? []);
+    } catch {
+      setActivityLogs([]);
+    }
+  }, [token]);
+
+  const loadAttachments = useCallback(async (taskId: string) => {
+    if (!token) return;
+    try {
+      const list = await api<TaskAttachment[]>(`/tasks/${taskId}/attachments`, { token });
+      setAttachments(list ?? []);
+    } catch {
+      setAttachments([]);
+    }
+  }, [token]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -131,6 +170,10 @@ export function TasksPage() {
       setType(allowedTypes[0]);
     }
   }, [allowedTypes, type]);
+
+  useEffect(() => {
+    if (view === 'kanban') setPage(1);
+  }, [view]);
 
   function openCreate() {
     if (!canCreate) return;
@@ -176,9 +219,10 @@ export function TasksPage() {
     return t.createdById === user.id || t.assignedToId === user.id;
   }
 
-  function openEdit(t: Task) {
-    if (!canUpdate(t)) return;
+  function openDetails(t: Task) {
     setEditing(t);
+    setAttachments([]);
+    setActivityLogs([]);
     setEditTitle(t.title);
     setEditDescription(t.description ?? '');
     setEditType(t.type);
@@ -188,6 +232,14 @@ export function TasksPage() {
     setEditDueDate(t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 16) : '');
     setEditAssignedToId(t.assignedToId ?? '');
     setEditModalOpen(true);
+    void loadTaskDetails(t.id);
+    void loadAttachments(t.id);
+    void loadActivity(t.id);
+  }
+
+  function openEdit(t: Task) {
+    if (!canUpdate(t)) return;
+    openDetails(t);
   }
 
   async function onUpdate(e: FormEvent) {
@@ -263,6 +315,118 @@ export function TasksPage() {
     return i;
   }
 
+  function formatBytes(bytes: number) {
+    if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+    const kb = bytes / 1024;
+    if (kb < 1024) return `${kb.toFixed(1)} KB`;
+    const mb = kb / 1024;
+    return `${mb.toFixed(1)} MB`;
+  }
+
+  async function uploadAttachment(file: File) {
+    if (!token || !editing) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      await api<TaskAttachment>(`/tasks/${editing.id}/attachments`, {
+        method: 'POST',
+        token,
+        body: form,
+        headers: {},
+      });
+      await loadAttachments(editing.id);
+      await loadTaskDetails(editing.id);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function downloadAttachment(att: TaskAttachment) {
+    if (!token) return;
+    const res = await fetch(`${API}/tasks/attachments/${att.id}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      alert('Téléchargement impossible');
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = att.originalName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  async function removeAttachment(att: TaskAttachment) {
+    if (!token || !editing) return;
+    if (!window.confirm('Supprimer cette pièce jointe ?')) return;
+    try {
+      await api(`/tasks/attachments/${att.id}`, { method: 'DELETE', token });
+      await loadAttachments(editing.id);
+      await loadTaskDetails(editing.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Suppression impossible');
+    }
+  }
+
+  function activityLabel(a: AuditLogEntry) {
+    if (a.action === 'ATTACH') {
+      const v = (a.newValue as { originalName?: string } | null) ?? null;
+      return `Pièce jointe ajoutée${v?.originalName ? `: ${v.originalName}` : ''}`;
+    }
+    if (a.action === 'DETACH') {
+      return 'Pièce jointe supprimée';
+    }
+    if (a.action === 'POST') return 'Tâche créée';
+    if (a.action === 'DELETE') return 'Tâche supprimée';
+    if (a.action === 'PATCH') {
+      const v = (a.newValue as { status?: TaskStatus; title?: string } | null) ?? null;
+      if (v?.status === 'DONE') return 'Tâche terminée';
+      if (v?.status === 'CANCELED') return 'Tâche annulée';
+      if (v?.status === 'IN_PROGRESS') return 'Tâche en cours';
+      if (v?.status === 'OPEN') return 'Tâche ouverte';
+      if (v?.title) return 'Titre modifié';
+      return 'Tâche mise à jour';
+    }
+    return a.action;
+  }
+
+  const kanbanColumns: { status: TaskStatus; label: string }[] = [
+    { status: 'OPEN', label: 'Open' },
+    { status: 'IN_PROGRESS', label: 'In Progress' },
+    { status: 'DONE', label: 'Completed' },
+    { status: 'CANCELED', label: 'Cancelled' },
+  ];
+
+  async function onDragEnd(result: DropResult) {
+    if (!result.destination) return;
+    const taskId = result.draggableId;
+    const nextStatus = result.destination.droppableId as TaskStatus;
+    const prevStatus = result.source.droppableId as TaskStatus;
+    if (nextStatus === prevStatus && result.destination.index === result.source.index) return;
+    const t = tasks.find((x) => x.id === taskId);
+    if (!t || !canUpdate(t) || !token) return;
+
+    setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, status: nextStatus } : x)));
+    try {
+      await api<Task>(`/tasks/${taskId}`, {
+        method: 'PATCH',
+        token,
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      await load();
+      await loadStats();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Déplacement impossible');
+      await load();
+    }
+  }
+
   return (
     <div className="page">
       <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
@@ -273,6 +437,22 @@ export function TasksPage() {
           </p>
         </div>
         <div className="row-gap">
+          <button
+            className="secondary small"
+            onClick={() => setView('table')}
+            style={{ color: view === 'table' ? 'var(--primary-light)' : undefined }}
+            title="Vue liste"
+          >
+            <List size={14} /> Liste
+          </button>
+          <button
+            className="secondary small"
+            onClick={() => setView('kanban')}
+            style={{ color: view === 'kanban' ? 'var(--primary-light)' : undefined }}
+            title="Vue kanban"
+          >
+            <Kanban size={14} /> Kanban
+          </button>
           <button className="secondary small" onClick={() => window.location.reload()} title="Actualiser">
             <Clock size={14} /> Actualiser
           </button>
@@ -361,13 +541,12 @@ export function TasksPage() {
                 Type
               </div>
               <select
-                value={lockedType ?? filterType}
+                value={filterType}
                 onChange={(e) => { setFilterType(e.target.value as TaskType | ''); setPage(1); }}
-                disabled={!!lockedType}
                 style={{ width: '180px' }}
               >
                 <option value="">Tous</option>
-                {types.map((t) => (
+                {(isAdmin ? types : allowedTypes).map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
@@ -390,155 +569,274 @@ export function TasksPage() {
           </div>
         </div>
 
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Titre</th>
-                <th>Client/Lead</th>
-                <th>Type</th>
-                <th>Priorité</th>
-                <th>Assigné</th>
-                <th>Progress</th>
-                <th>Échéance</th>
-                <th>Statut</th>
-                <th>Création</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((t) => {
-                const isOverdue =
-                  (t.status === 'OPEN' || t.status === 'IN_PROGRESS') &&
-                  t.dueDate &&
-                  new Date(t.dueDate).getTime() < now;
-                const assigned = t.assignedTo ?? null;
-                const lead = t.lead ?? null;
-                return (
-                  <motion.tr key={t.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                    <td style={{ fontWeight: 700 }}>
-                      <div className="flex-center" style={{ gap: '0.5rem' }}>
-                        {isOverdue && <AlertTriangle size={14} color="var(--danger)" />}
-                        {t.title}
-                      </div>
-                      {t.description && (
-                        <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
-                          {t.description}
-                        </div>
-                      )}
-                    </td>
-                    <td className="small">
-                      {lead ? (
-                        <div>
-                          <div style={{ fontWeight: 700 }}>{lead.firstName} {lead.lastName}</div>
-                          <div className="text-muted x-small">{lead.email}</div>
-                        </div>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`badge ${t.type === 'MARKETING' ? 'badge-orange' : 'badge-blue'}`}>{t.type}</span>
-                    </td>
-                    <td>
-                      <span className={`badge ${t.priority === 'HIGH' ? 'badge-red' : t.priority === 'LOW' ? 'badge-green' : 'badge-blue'}`}>
-                        {t.priority}
-                      </span>
-                    </td>
-                    <td>
-                      {assigned ? (
-                        <div className="flex-center" style={{ gap: '0.6rem' }}>
-                          <div style={{ width: '28px', height: '28px', borderRadius: '10px', background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
-                            {initialsOf(assigned)}
+        {view === 'table' ? (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Titre</th>
+                    <th>Client/Lead</th>
+                    <th>Type</th>
+                    <th>Priorité</th>
+                    <th>Assigné</th>
+                    <th>Progress</th>
+                    <th>Échéance</th>
+                    <th>Statut</th>
+                    <th>Création</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((t) => {
+                    const isOverdue =
+                      (t.status === 'OPEN' || t.status === 'IN_PROGRESS') &&
+                      t.dueDate &&
+                      new Date(t.dueDate).getTime() < now;
+                    const assigned = t.assignedTo ?? null;
+                    const lead = t.lead ?? null;
+                    return (
+                      <motion.tr key={t.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                        <td style={{ fontWeight: 700 }}>
+                          <div className="flex-center" style={{ gap: '0.5rem' }}>
+                            {isOverdue && <AlertTriangle size={14} color="var(--danger)" />}
+                            {t.title}
                           </div>
-                          <div>
-                            <div className="small" style={{ fontWeight: 700 }}>
-                              {`${assigned.firstName ?? ''} ${assigned.lastName ?? ''}`.trim() || assigned.email}
+                          {t.description && (
+                            <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
+                              {t.description}
                             </div>
-                            <div className="text-muted x-small">{assigned.role}</div>
+                          )}
+                        </td>
+                        <td className="small">
+                          {lead ? (
+                            <div>
+                              <div style={{ fontWeight: 700 }}>{lead.firstName} {lead.lastName}</div>
+                              <div className="text-muted x-small">{lead.email}</div>
+                            </div>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td>
+                          <span className={`badge ${t.type === 'MARKETING' ? 'badge-orange' : 'badge-blue'}`}>{t.type}</span>
+                        </td>
+                        <td>
+                          <span className={`badge ${t.priority === 'HIGH' ? 'badge-red' : t.priority === 'LOW' ? 'badge-green' : 'badge-blue'}`}>
+                            {t.priority}
+                          </span>
+                        </td>
+                        <td>
+                          {assigned ? (
+                            <div className="flex-center" style={{ gap: '0.6rem' }}>
+                              <div style={{ width: '28px', height: '28px', borderRadius: '10px', background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
+                                {initialsOf(assigned)}
+                              </div>
+                              <div>
+                                <div className="small" style={{ fontWeight: 700 }}>
+                                  {`${assigned.firstName ?? ''} ${assigned.lastName ?? ''}`.trim() || assigned.email}
+                                </div>
+                                <div className="text-muted x-small">{assigned.role}</div>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ minWidth: '140px' }}>
+                            <div className="flex-between x-small" style={{ marginBottom: '6px' }}>
+                              <span className="text-muted">{t.progress ?? 0}%</span>
+                            </div>
+                            <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '10px', overflow: 'hidden' }}>
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${Math.max(0, Math.min(100, t.progress ?? 0))}%` }}
+                                style={{
+                                  height: '100%',
+                                  background: 'linear-gradient(90deg, var(--primary), var(--primary-light))',
+                                }}
+                              />
+                            </div>
                           </div>
+                        </td>
+                        <td className="small text-muted">
+                          {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
+                        </td>
+                        <td>
+                          <span className={`badge ${statusBadge(t.status)}`}>{t.status}</span>
+                        </td>
+                        <td className="small text-muted">
+                          {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}
+                        </td>
+                        <td>
+                          <div className="row-gap">
+                            {canUpdate(t) ? (
+                              <button className="secondary small" onClick={() => openEdit(t)} style={{ padding: '0.4rem 0.6rem' }}>
+                                <Pencil size={14} /> Éditer
+                              </button>
+                            ) : (
+                              <button className="secondary small" onClick={() => openDetails(t)} style={{ padding: '0.4rem 0.6rem' }}>
+                                <Activity size={14} /> Détails
+                              </button>
+                            )}
+                            {canUpdate(t) && (t.status === 'OPEN' || t.status === 'IN_PROGRESS') && (
+                              <>
+                                <button className="secondary small" onClick={() => void markDone(t)} style={{ padding: '0.4rem 0.6rem', color: 'var(--success)' }}>
+                                  <CheckCircle2 size={14} /> Terminer
+                                </button>
+                                <button className="secondary small" onClick={() => void cancelTask(t)} style={{ padding: '0.4rem 0.6rem', color: 'var(--danger)' }}>
+                                  <Ban size={14} /> Annuler
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {tasks.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '2rem', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)', marginTop: '1rem' }}>
+                <p className="text-muted small">Aucune tâche.</p>
+              </div>
+            )}
+
+            <div style={{ paddingTop: '1rem', display: 'flex', justifyContent: 'center', gap: '0.5rem' }}>
+              <button
+                className="secondary small"
+                disabled={page === 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Précédent
+              </button>
+              <div className="flex-center small text-muted" style={{ padding: '0 1rem' }}>
+                Page {page} sur {lastPage}
+              </div>
+              <button
+                className="secondary small"
+                disabled={page === lastPage}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Suivant
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <DragDropContext onDragEnd={onDragEnd}>
+              <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+                {kanbanColumns.map((c) => {
+                  const colTasks = tasks
+                    .filter((t) => t.status === c.status)
+                    .sort((a, b) => {
+                      const ad = a.dueDate ? new Date(a.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+                      const bd = b.dueDate ? new Date(b.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+                      return ad - bd;
+                    });
+                  return (
+                    <Droppable key={c.status} droppableId={c.status}>
+                      {(provided, snapshot) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.droppableProps}
+                          style={{
+                            flex: '0 0 320px',
+                            minWidth: '320px',
+                            borderRadius: 'var(--radius-md)',
+                            border: '1px solid var(--glass-border)',
+                            background: snapshot.isDraggingOver ? 'rgba(124, 58, 237, 0.12)' : 'rgba(30, 41, 59, 0.35)',
+                            padding: '1rem',
+                          }}
+                        >
+                          <div className="flex-between" style={{ marginBottom: '1rem' }}>
+                            <div style={{ fontWeight: 800 }}>{c.label}</div>
+                            <span className="badge badge-blue">{colTasks.length}</span>
+                          </div>
+
+                          {colTasks.map((t, index) => {
+                            const isOverdue =
+                              (t.status === 'OPEN' || t.status === 'IN_PROGRESS') &&
+                              t.dueDate &&
+                              new Date(t.dueDate).getTime() < now;
+                            const canDrag = canUpdate(t);
+                            return (
+                              <Draggable key={t.id} draggableId={t.id} index={index} isDragDisabled={!canDrag}>
+                                {(dragProvided, dragSnapshot) => (
+                                  <div
+                                    ref={dragProvided.innerRef}
+                                    {...dragProvided.draggableProps}
+                                    {...dragProvided.dragHandleProps}
+                                    style={{
+                                      ...dragProvided.draggableProps.style,
+                                      padding: '1rem',
+                                      borderRadius: 'var(--radius-md)',
+                                      border: '1px solid var(--glass-border)',
+                                      background: 'rgba(15, 23, 42, 0.6)',
+                                      boxShadow: dragSnapshot.isDragging ? 'var(--shadow-lg)' : 'var(--shadow-sm)',
+                                      marginBottom: '0.75rem',
+                                      cursor: canDrag ? 'grab' : 'default',
+                                    }}
+                                    onClick={() => openDetails(t)}
+                                  >
+                                    <div className="flex-between" style={{ marginBottom: '0.5rem' }}>
+                                      <div className="flex-center" style={{ gap: '0.5rem', fontWeight: 800 }}>
+                                        {isOverdue && <AlertTriangle size={14} color="var(--danger)" />}
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>
+                                          {t.title}
+                                        </span>
+                                      </div>
+                                      <span className={`badge ${t.priority === 'HIGH' ? 'badge-red' : t.priority === 'LOW' ? 'badge-green' : 'badge-blue'}`}>
+                                        {t.priority}
+                                      </span>
+                                    </div>
+
+                                    {t.lead && (
+                                      <div className="text-muted x-small" style={{ marginBottom: '0.5rem' }}>
+                                        {t.lead.firstName} {t.lead.lastName}
+                                      </div>
+                                    )}
+
+                                    <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '10px', overflow: 'hidden', marginBottom: '0.5rem' }}>
+                                      <motion.div
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${Math.max(0, Math.min(100, t.progress ?? 0))}%` }}
+                                        style={{
+                                          height: '100%',
+                                          background: 'linear-gradient(90deg, var(--primary), var(--primary-light))',
+                                        }}
+                                      />
+                                    </div>
+
+                                    <div className="flex-between x-small text-muted">
+                                      <span>{t.assignedTo ? `${t.assignedTo.firstName ?? ''} ${t.assignedTo.lastName ?? ''}`.trim() || t.assignedTo.email : '—'}</span>
+                                      <span>{t.dueDate ? new Date(t.dueDate).toLocaleDateString() : '—'}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </Draggable>
+                            );
+                          })}
+
+                          {colTasks.length === 0 && (
+                            <div style={{ padding: '1.25rem', textAlign: 'center', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)' }}>
+                              <p className="text-muted small" style={{ margin: 0 }}>Aucune tâche</p>
+                            </div>
+                          )}
+
+                          {provided.placeholder}
                         </div>
-                      ) : (
-                        <span className="text-muted">—</span>
                       )}
-                    </td>
-                    <td>
-                      <div style={{ minWidth: '140px' }}>
-                        <div className="flex-between x-small" style={{ marginBottom: '6px' }}>
-                          <span className="text-muted">{t.progress ?? 0}%</span>
-                        </div>
-                        <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '10px', overflow: 'hidden' }}>
-                          <motion.div
-                            initial={{ width: 0 }}
-                            animate={{ width: `${Math.max(0, Math.min(100, t.progress ?? 0))}%` }}
-                            style={{
-                              height: '100%',
-                              background: 'linear-gradient(90deg, var(--primary), var(--primary-light))',
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </td>
-                    <td className="small text-muted">
-                      {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
-                    </td>
-                    <td>
-                      <span className={`badge ${statusBadge(t.status)}`}>{t.status}</span>
-                    </td>
-                    <td className="small text-muted">
-                      {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}
-                    </td>
-                    <td>
-                      <div className="row-gap">
-                        {canUpdate(t) && (
-                          <button className="secondary small" onClick={() => openEdit(t)} style={{ padding: '0.4rem 0.6rem' }}>
-                            <Pencil size={14} /> Éditer
-                          </button>
-                        )}
-                        {canUpdate(t) && (t.status === 'OPEN' || t.status === 'IN_PROGRESS') && (
-                          <>
-                            <button className="secondary small" onClick={() => void markDone(t)} style={{ padding: '0.4rem 0.6rem', color: 'var(--success)' }}>
-                              <CheckCircle2 size={14} /> Terminer
-                            </button>
-                            <button className="secondary small" onClick={() => void cancelTask(t)} style={{ padding: '0.4rem 0.6rem', color: 'var(--danger)' }}>
-                              <Ban size={14} /> Annuler
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </motion.tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {tasks.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '2rem', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)', marginTop: '1rem' }}>
-            <p className="text-muted small">Aucune tâche.</p>
-          </div>
+                    </Droppable>
+                  );
+                })}
+              </div>
+            </DragDropContext>
+          </>
         )}
-
-        <div style={{ paddingTop: '1rem', display: 'flex', justifyContent: 'center', gap: '0.5rem' }}>
-          <button
-            className="secondary small"
-            disabled={page === 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Précédent
-          </button>
-          <div className="flex-center small text-muted" style={{ padding: '0 1rem' }}>
-            Page {page} sur {lastPage}
-          </div>
-          <button
-            className="secondary small"
-            disabled={page === lastPage}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Suivant
-          </button>
-        </div>
       </section>
 
       <AnimatePresence>
@@ -631,10 +929,20 @@ export function TasksPage() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               className="card"
-              style={{ width: '100%', maxWidth: '650px', padding: '2.5rem' }}
+              style={{ width: '100%', maxWidth: '980px', padding: '2.5rem', maxHeight: '85vh', overflowY: 'auto' }}
             >
+              {(() => {
+                const readOnly = !canUpdate(editing);
+                return (
               <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
-                <h2 style={{ margin: 0 }}>Modifier tâche</h2>
+                <div>
+                  <h2 style={{ margin: 0 }}>{readOnly ? 'Détails tâche' : 'Modifier tâche'}</h2>
+                  {readOnly && (
+                    <div className="text-muted small" style={{ marginTop: '0.25rem' }}>
+                      Lecture seule
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={() => { setEditModalOpen(false); setEditing(null); }}
                   style={{ background: 'none', border: 'none', color: 'var(--text-muted)' }}
@@ -643,20 +951,20 @@ export function TasksPage() {
                 </button>
               </div>
 
-              <form onSubmit={onUpdate} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              <form onSubmit={readOnly ? (e) => e.preventDefault() : onUpdate} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Titre</label>
-                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+                  <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required disabled={readOnly} />
                 </div>
 
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Description</label>
-                  <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} style={{ minHeight: '90px' }} />
+                  <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} style={{ minHeight: '90px' }} disabled={readOnly} />
                 </div>
 
                 <div className="form-group">
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Type</label>
-                  <select value={editType} onChange={(e) => setEditType(e.target.value as TaskType)} disabled={!isAdmin && allowedTypes.length === 0}>
+                  <select value={editType} onChange={(e) => setEditType(e.target.value as TaskType)} disabled={readOnly || (!isAdmin && allowedTypes.length === 0)}>
                     {(isAdmin ? types : allowedTypes).map((t) => (
                       <option key={t} value={t}>
                         {t}
@@ -667,7 +975,7 @@ export function TasksPage() {
 
                 <div className="form-group">
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Priorité</label>
-                  <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as TaskPriority)}>
+                  <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as TaskPriority)} disabled={readOnly}>
                     {priorities.map((p) => (
                       <option key={p} value={p}>{p}</option>
                     ))}
@@ -676,7 +984,7 @@ export function TasksPage() {
 
                 <div className="form-group">
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Statut</label>
-                  <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as TaskStatus)}>
+                  <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as TaskStatus)} disabled={readOnly}>
                     {statuses.map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
@@ -685,18 +993,18 @@ export function TasksPage() {
 
                 <div className="form-group">
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Échéance</label>
-                  <input type="datetime-local" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
+                  <input type="datetime-local" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} disabled={readOnly} />
                 </div>
 
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Progress (0-100)</label>
-                  <input type="number" min={0} max={100} value={editProgress} onChange={(e) => setEditProgress(Math.max(0, Math.min(100, Number(e.target.value))))} />
+                  <input type="number" min={0} max={100} value={editProgress} onChange={(e) => setEditProgress(Math.max(0, Math.min(100, Number(e.target.value))))} disabled={readOnly} />
                 </div>
 
                 {isAdmin && (
                   <div className="form-group" style={{ gridColumn: 'span 2' }}>
                     <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Assigné à</label>
-                    <select value={editAssignedToId} onChange={(e) => setEditAssignedToId(e.target.value)}>
+                    <select value={editAssignedToId} onChange={(e) => setEditAssignedToId(e.target.value)} disabled={readOnly}>
                       <option value="">Non assigné</option>
                       {users.map((u) => (
                         <option key={u.id} value={u.id}>
@@ -708,7 +1016,9 @@ export function TasksPage() {
                 )}
 
                 <div style={{ gridColumn: 'span 2', display: 'flex', gap: '1rem', marginTop: '0.75rem' }}>
-                  <button type="submit" className="primary" style={{ flex: 1 }}>Sauvegarder</button>
+                  {!readOnly && (
+                    <button type="submit" className="primary" style={{ flex: 1 }}>Sauvegarder</button>
+                  )}
                   <button
                     type="button"
                     className="secondary"
@@ -719,6 +1029,94 @@ export function TasksPage() {
                   </button>
                 </div>
               </form>
+
+              <div style={{ marginTop: '1.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div style={{ border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', padding: '1.25rem', background: 'rgba(30, 41, 59, 0.35)' }}>
+                  <div className="flex-between" style={{ marginBottom: '1rem' }}>
+                    <div className="flex-center" style={{ gap: '0.5rem', fontWeight: 800 }}>
+                      <Paperclip size={16} /> Pièces jointes
+                    </div>
+                    <span className="badge badge-blue">{attachments.length}</span>
+                  </div>
+
+                  {!readOnly && (
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label className="secondary small" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: uploading ? 'not-allowed' : 'pointer', opacity: uploading ? 0.6 : 1 }}>
+                        <Paperclip size={14} /> Ajouter un fichier
+                        <input
+                          type="file"
+                          style={{ display: 'none' }}
+                          disabled={uploading}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void uploadAttachment(f);
+                            e.currentTarget.value = '';
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {attachments.map((a) => (
+                      <div key={a.id} style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '0.75rem', background: 'rgba(15, 23, 42, 0.5)' }}>
+                        <div className="flex-between" style={{ gap: '1rem' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {a.originalName}
+                            </div>
+                            <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
+                              {formatBytes(a.size)} • {new Date(a.createdAt).toLocaleString()}
+                            </div>
+                          </div>
+                          <div className="row-gap">
+                            <button className="secondary small" onClick={() => void downloadAttachment(a)} style={{ padding: '0.35rem 0.6rem' }}>
+                              Télécharger
+                            </button>
+                            {!readOnly && (
+                              <button className="secondary small" onClick={() => void removeAttachment(a)} style={{ padding: '0.35rem 0.6rem', color: 'var(--danger)' }}>
+                                Supprimer
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {attachments.length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '1.25rem', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)' }}>
+                        <p className="text-muted small" style={{ margin: 0 }}>Aucun fichier.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', padding: '1.25rem', background: 'rgba(30, 41, 59, 0.35)' }}>
+                  <div className="flex-between" style={{ marginBottom: '1rem' }}>
+                    <div className="flex-center" style={{ gap: '0.5rem', fontWeight: 800 }}>
+                      <Activity size={16} /> Historique
+                    </div>
+                    <span className="badge badge-blue">{activityLogs.length}</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {activityLogs.map((a) => (
+                      <div key={a.id} style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '0.75rem', background: 'rgba(15, 23, 42, 0.5)' }}>
+                        <div style={{ fontWeight: 800, fontSize: '0.9rem' }}>{activityLabel(a)}</div>
+                        <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
+                          {a.user ? `${a.user.firstName ?? ''} ${a.user.lastName ?? ''}`.trim() || a.user.email : '—'} • {new Date(a.createdAt).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                    {activityLogs.length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '1.25rem', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)' }}>
+                        <p className="text-muted small" style={{ margin: 0 }}>Aucun événement.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              );
+              })()}
             </motion.div>
           </div>
         )}

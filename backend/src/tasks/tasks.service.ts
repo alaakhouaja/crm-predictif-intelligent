@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { unlink } from 'fs/promises';
 import { Prisma, TaskPriority, TaskStatus, TaskType } from '@prisma/client';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
@@ -38,6 +39,23 @@ export class TasksService {
       },
     },
     createdBy: {
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+      },
+    },
+  } as const;
+
+  private readonly attachmentSelect = {
+    id: true,
+    originalName: true,
+    mimeType: true,
+    size: true,
+    createdAt: true,
+    uploadedBy: {
       select: {
         id: true,
         email: true,
@@ -268,7 +286,13 @@ export class TasksService {
 
     const task = await this.prisma.task.findUnique({
       where: { id },
-      include: this.taskInclude,
+      include: {
+        ...this.taskInclude,
+        attachments: {
+          select: this.attachmentSelect,
+          orderBy: { createdAt: 'desc' },
+        },
+      },
     });
     if (!task) throw new NotFoundException('Task not found');
     if (!this.canReadTask(user, task)) throw new ForbiddenException();
@@ -323,6 +347,10 @@ export class TasksService {
         ? 100
         : dto.progress;
 
+    const resetNotifications =
+      dto.dueDate !== undefined ||
+      dto.status !== undefined;
+
     const task = await this.prisma.task.update({
       where: { id },
       data: {
@@ -336,8 +364,8 @@ export class TasksService {
         completedAt,
         leadId: dto.leadId,
         assignedToId: dto.assignedToId,
-        overdueNotifiedAt:
-          status && status !== TaskStatus.OPEN && status !== TaskStatus.IN_PROGRESS ? null : undefined,
+        overdueNotifiedAt: resetNotifications ? null : undefined,
+        reminderNotifiedAt: resetNotifications ? null : undefined,
       },
       include: this.taskInclude,
     });
@@ -358,6 +386,188 @@ export class TasksService {
     }
 
     return this.prisma.task.delete({ where: { id: existing.id } });
+  }
+
+  async getActivity(user: AuthUser, id: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        type: true,
+        assignedToId: true,
+        createdById: true,
+        lead: { select: { ownerId: true } },
+      },
+    });
+    if (!task) throw new NotFoundException('Task not found');
+    if (!this.canReadTask(user, task)) throw new ForbiddenException();
+
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        entityId: id,
+        entityType: { in: ['task', 'Task', 'TASK'] },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return logs;
+  }
+
+  async addAttachment(
+    user: AuthUser,
+    taskId: string,
+    file: { path: string; originalname: string; mimetype: string; size: number },
+  ) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: {
+        id: true,
+        createdById: true,
+        assignedToId: true,
+        type: true,
+        lead: { select: { ownerId: true } },
+      },
+    });
+    if (!task) throw new NotFoundException('Task not found');
+    if (
+      user.role !== UserRole.ADMIN &&
+      task.createdById !== user.id &&
+      task.assignedToId !== user.id
+    ) {
+      throw new ForbiddenException('You can only update your own tasks');
+    }
+
+    const attachment = await this.prisma.taskAttachment.create({
+      data: {
+        taskId,
+        uploadedById: user.id,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        storagePath: file.path,
+      },
+      select: this.attachmentSelect,
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'ATTACH',
+        entityType: 'task',
+        entityId: taskId,
+        newValue: {
+          attachmentId: attachment.id,
+          originalName: attachment.originalName,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+        },
+      },
+    });
+
+    return attachment;
+  }
+
+  async listAttachments(user: AuthUser, taskId: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: {
+        id: true,
+        type: true,
+        assignedToId: true,
+        createdById: true,
+        lead: { select: { ownerId: true } },
+      },
+    });
+    if (!task) throw new NotFoundException('Task not found');
+    if (!this.canReadTask(user, task)) throw new ForbiddenException();
+
+    return this.prisma.taskAttachment.findMany({
+      where: { taskId },
+      select: this.attachmentSelect,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getAttachmentForDownload(user: AuthUser, attachmentId: string) {
+    const att = await this.prisma.taskAttachment.findUnique({
+      where: { id: attachmentId },
+      select: {
+        id: true,
+        taskId: true,
+        originalName: true,
+        mimeType: true,
+        storagePath: true,
+        task: {
+          select: {
+            type: true,
+            assignedToId: true,
+            createdById: true,
+            lead: { select: { ownerId: true } },
+          },
+        },
+      },
+    });
+    if (!att) throw new NotFoundException('Attachment not found');
+    if (!this.canReadTask(user, att.task)) throw new ForbiddenException();
+
+    return {
+      id: att.id,
+      originalName: att.originalName,
+      mimeType: att.mimeType,
+      storagePath: att.storagePath,
+    };
+  }
+
+  async removeAttachment(user: AuthUser, attachmentId: string) {
+    const att = await this.prisma.taskAttachment.findUnique({
+      where: { id: attachmentId },
+      select: {
+        id: true,
+        taskId: true,
+        storagePath: true,
+        task: {
+          select: {
+            createdById: true,
+            assignedToId: true,
+          },
+        },
+      },
+    });
+    if (!att) throw new NotFoundException('Attachment not found');
+    if (
+      user.role !== UserRole.ADMIN &&
+      att.task.createdById !== user.id &&
+      att.task.assignedToId !== user.id
+    ) {
+      throw new ForbiddenException('You can only update your own tasks');
+    }
+
+    await this.prisma.taskAttachment.delete({ where: { id: att.id } });
+    await unlink(att.storagePath).catch(() => undefined);
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'DETACH',
+        entityType: 'task',
+        entityId: att.taskId,
+        newValue: { attachmentId: att.id },
+      },
+    });
+
+    return { ok: true };
   }
 
   async getStats(
@@ -473,15 +683,18 @@ export class TasksService {
     return and.length ? { AND: and } : {};
   }
 
-  private buildOrderBy(sortBy?: string, sortDir?: string) {
-    const dir = sortDir === 'asc' ? 'asc' : 'desc';
+  private buildOrderBy(
+    sortBy?: string,
+    sortDir?: string,
+  ): Prisma.TaskOrderByWithRelationInput[] {
+    const dir: Prisma.SortOrder = sortDir === 'asc' ? 'asc' : 'desc';
 
-    if (sortBy === 'priority') return [{ priority: dir }, { updatedAt: 'desc' }] as const;
-    if (sortBy === 'dueDate') return [{ dueDate: dir }, { updatedAt: 'desc' }] as const;
-    if (sortBy === 'status') return [{ status: dir }, { updatedAt: 'desc' }] as const;
-    if (sortBy === 'progress') return [{ progress: dir }, { updatedAt: 'desc' }] as const;
-    if (sortBy === 'createdAt') return [{ createdAt: dir }, { updatedAt: 'desc' }] as const;
+    if (sortBy === 'priority') return [{ priority: dir }, { updatedAt: 'desc' }];
+    if (sortBy === 'dueDate') return [{ dueDate: dir }, { updatedAt: 'desc' }];
+    if (sortBy === 'status') return [{ status: dir }, { updatedAt: 'desc' }];
+    if (sortBy === 'progress') return [{ progress: dir }, { updatedAt: 'desc' }];
+    if (sortBy === 'createdAt') return [{ createdAt: dir }, { updatedAt: 'desc' }];
 
-    return [{ status: 'asc' }, { dueDate: 'asc' }, { updatedAt: 'desc' }] as const;
+    return [{ status: 'asc' }, { dueDate: 'asc' }, { updatedAt: 'desc' }];
   }
 }

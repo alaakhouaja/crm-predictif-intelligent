@@ -85,6 +85,7 @@ export type Task = {
   assignedToId: string | null;
   createdById: string;
   overdueNotifiedAt: string | null;
+  reminderNotifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   lead?: {
@@ -108,6 +109,34 @@ export type Task = {
     lastName: string | null;
     role: UserRole;
   } | null;
+  attachments?: TaskAttachment[];
+};
+
+export type TaskAttachment = {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  uploadedBy: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    role: UserRole;
+  };
+};
+
+export type AuditLogEntry = {
+  id: string;
+  userId: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  oldValue: unknown | null;
+  newValue: unknown | null;
+  createdAt: string;
+  user?: AuthUser;
 };
 
 export type PaginatedResponse<T> = {

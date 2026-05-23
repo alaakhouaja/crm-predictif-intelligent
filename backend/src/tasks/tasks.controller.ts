@@ -7,15 +7,26 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
   ApiOperation,
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { TaskStatus, TaskType } from '@prisma/client';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { randomUUID } from 'crypto';
+import { mkdirSync } from 'fs';
+import path from 'path';
+import type { Response } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -34,6 +45,19 @@ import { TasksService } from './tasks.service';
 @Controller('tasks')
 export class TasksController {
   constructor(private readonly tasks: TasksService) {}
+
+  private readonly uploadStorage = diskStorage({
+    destination: (req, _file, cb) => {
+      const taskId = (req.params as { id?: string }).id ?? 'unknown';
+      const dest = path.join(process.cwd(), 'uploads', 'tasks', taskId);
+      mkdirSync(dest, { recursive: true });
+      cb(null, dest);
+    },
+    filename: (_req, file, cb) => {
+      const safeOriginal = file.originalname.replace(/[^\w.\- ]+/g, '_');
+      cb(null, `${randomUUID()}_${safeOriginal}`);
+    },
+  });
 
   @Post()
   @UseGuards(RolesGuard)
@@ -107,6 +131,83 @@ export class TasksController {
       search,
       overdue,
     });
+  }
+
+  @Get('attachments/:attachmentId/download')
+  @ApiOperation({ summary: 'Télécharger une pièce jointe' })
+  async downloadAttachment(
+    @CurrentUser() user: AuthUser,
+    @Param('attachmentId') attachmentId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const att = await this.tasks.getAttachmentForDownload(user, attachmentId);
+    res.setHeader('Content-Type', att.mimeType || 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(att.originalName)}"`,
+    );
+    return res.sendFile(att.storagePath);
+  }
+
+  @Delete('attachments/:attachmentId')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SALES, UserRole.MARKETING)
+  @ApiOperation({ summary: 'Supprimer une pièce jointe' })
+  removeAttachment(
+    @CurrentUser() user: AuthUser,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.tasks.removeAttachment(user, attachmentId);
+  }
+
+  @Get(':id/activity')
+  @ApiOperation({ summary: 'Historique activité d’une tâche' })
+  activity(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.tasks.getActivity(user, id);
+  }
+
+  @Get(':id/attachments')
+  @ApiOperation({ summary: 'Lister les pièces jointes d’une tâche' })
+  listAttachments(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.tasks.listAttachments(user, id);
+  }
+
+  @Post(':id/attachments')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SALES, UserRole.MARKETING)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (req, _file, cb) => {
+          const taskId = (req.params as { id?: string }).id ?? 'unknown';
+          const dest = path.join(process.cwd(), 'uploads', 'tasks', taskId);
+          mkdirSync(dest, { recursive: true });
+          cb(null, dest);
+        },
+        filename: (_req, file, cb) => {
+          const safeOriginal = file.originalname.replace(/[^\w.\- ]+/g, '_');
+          cb(null, `${randomUUID()}_${safeOriginal}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  @ApiOperation({ summary: 'Uploader une pièce jointe' })
+  addAttachment(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.tasks.addAttachment(user, id, file);
   }
 
   @Get(':id')
