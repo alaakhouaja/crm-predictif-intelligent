@@ -11,6 +11,7 @@ import {
   TrendingUp,
   Target,
   CheckCircle,
+  AlertTriangle,
   Mail,
   Phone,
   Building2,
@@ -24,7 +25,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
-import type { Lead, LeadStage, PaginatedResponse, Interaction, InteractionType } from '../types';
+import type { Lead, LeadStage, PaginatedResponse, Interaction, InteractionType, Task } from '../types';
 
 const stages: LeadStage[] = [
   'NEW',
@@ -65,6 +66,10 @@ export function LeadsPage() {
   const [newInteractionContent, setNewInteractionContent] = useState('');
   const [newInteractionType, setNewInteractionType] = useState<InteractionType>('NOTE');
   const [loadingInteractions, setLoadingInteractions] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [loadingTasks, setLoadingTasks] = useState(false);
 
   // Modaux
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -278,6 +283,24 @@ export function LeadsPage() {
     }
   }, [token]);
 
+  const loadTasks = useCallback(async (leadId: string) => {
+    if (!token) return;
+    setLoadingTasks(true);
+    try {
+      const res = await api<PaginatedResponse<Task>>(`/tasks?leadId=${leadId}&limit=20`, { token });
+      if (res && res.data) {
+        setTasks(res.data);
+      } else {
+        setTasks([]);
+      }
+    } catch (err) {
+      console.error('Erreur tâches:', err);
+      setTasks([]);
+    } finally {
+      setLoadingTasks(false);
+    }
+  }, [token]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -298,10 +321,12 @@ export function LeadsPage() {
   const canExportLead = !!user;
   const canExportAiDataset = user?.role === 'ADMIN' || user?.role === 'EXECUTIVE';
   const canAddInteraction = user?.role === 'ADMIN' || user?.role === 'SALES';
+  const canAddTask = user?.role === 'ADMIN' || user?.role === 'SALES' || user?.role === 'MARKETING';
 
   useEffect(() => {
     if (selectedLead) {
       void loadInteractions(selectedLead.id);
+      void loadTasks(selectedLead.id);
       setIsEditModalOpen(false); // Reset edit modal on lead change
       setEditFirstName(selectedLead.firstName);
       setEditLastName(selectedLead.lastName);
@@ -313,9 +338,12 @@ export function LeadsPage() {
       setEditStage(selectedLead.stage);
     } else {
       setInteractions([]);
+      setTasks([]);
+      setNewTaskTitle('');
+      setNewTaskDueDate('');
       setIsEditModalOpen(false);
     }
-  }, [loadInteractions, selectedLead]);
+  }, [loadInteractions, loadTasks, selectedLead]);
 
   async function onUpdateLead(e: FormEvent) {
     e.preventDefault();
@@ -436,6 +464,42 @@ export function LeadsPage() {
       await loadInteractions(selectedLead.id);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Erreur création interaction');
+    }
+  }
+
+  async function onCreateTask(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !selectedLead || !newTaskTitle || !canAddTask) return;
+    try {
+      await api<Task>('/tasks', {
+        method: 'POST',
+        token,
+        body: JSON.stringify({
+          title: newTaskTitle,
+          leadId: selectedLead.id,
+          dueDate: newTaskDueDate ? new Date(newTaskDueDate).toISOString() : undefined,
+          type: user?.role === 'MARKETING' ? 'MARKETING' : 'SALES',
+        }),
+      });
+      setNewTaskTitle('');
+      setNewTaskDueDate('');
+      await loadTasks(selectedLead.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erreur création tâche');
+    }
+  }
+
+  async function markTaskDone(id: string) {
+    if (!token || !selectedLead) return;
+    try {
+      await api<Task>(`/tasks/${id}`, {
+        method: 'PATCH',
+        token,
+        body: JSON.stringify({ status: 'DONE' }),
+      });
+      await loadTasks(selectedLead.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Mise à jour impossible');
     }
   }
 
@@ -831,6 +895,89 @@ export function LeadsPage() {
                         </div>
                       </div>
                     ))}
+                  </div>
+
+                  <div style={{ marginBottom: '2.5rem' }}>
+                    <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
+                      <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Tâches</h4>
+                      <span className="badge badge-blue">{tasks.length}</span>
+                    </div>
+
+                    {canAddTask && !selectedLead.isAnonymized ? (
+                      <form onSubmit={onCreateTask} style={{ marginBottom: '1.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                        <input
+                          placeholder="Nouvelle tâche..."
+                          value={newTaskTitle}
+                          onChange={(e) => setNewTaskTitle(e.target.value)}
+                          required
+                          style={{ gridColumn: 'span 2', background: 'rgba(15, 23, 42, 0.4)', border: '1px solid var(--glass-border)' }}
+                        />
+                        <input
+                          type="datetime-local"
+                          value={newTaskDueDate}
+                          onChange={(e) => setNewTaskDueDate(e.target.value)}
+                          style={{ background: 'rgba(15, 23, 42, 0.4)', border: '1px solid var(--glass-border)' }}
+                        />
+                        <button type="submit" className="primary small" style={{ padding: '0.4rem 0.8rem' }}>
+                          <Plus size={14} /> Ajouter
+                        </button>
+                      </form>
+                    ) : (
+                      <div style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)' }}>
+                        <p className="text-muted small" style={{ margin: 0 }}>
+                          {selectedLead.isAnonymized ? 'Lead archivé : tâches désactivées.' : 'Accès en lecture seule aux tâches.'}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="interactions-list">
+                      {loadingTasks ? (
+                        <div className="flex-center" style={{ padding: '1.5rem', justifyContent: 'center' }}>
+                          <RefreshCw size={24} className="animate-spin text-muted" />
+                        </div>
+                      ) : (
+                        tasks.map((t, idx) => {
+                          const isOverdue = t.status === 'OPEN' && t.dueDate && new Date(t.dueDate).getTime() < Date.now();
+                          return (
+                            <motion.div
+                              key={t.id}
+                              initial={{ opacity: 0, x: 20 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: idx * 0.04 }}
+                              className="interaction-item"
+                            >
+                              <div className="flex-between" style={{ marginBottom: '0.5rem' }}>
+                                <span className={`badge ${t.type === 'MARKETING' ? 'badge-orange' : 'badge-blue'}`} style={{ fontSize: '0.6rem' }}>
+                                  {t.type}
+                                </span>
+                                <span className="text-muted x-small">
+                                  {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
+                                </span>
+                              </div>
+                              <div className="flex-between" style={{ gap: '0.75rem' }}>
+                                <div style={{ fontSize: '0.85rem', lineHeight: '1.5', color: 'var(--text-main)', fontWeight: 600 }}>
+                                  <span className="flex-center" style={{ gap: '0.5rem' }}>
+                                    {isOverdue && <AlertTriangle size={14} color="var(--danger)" />}
+                                    {t.title}
+                                  </span>
+                                </div>
+                                {user?.role !== 'EXECUTIVE' && t.status === 'OPEN' && (
+                                  <button className="secondary small" onClick={() => void markTaskDone(t.id)} style={{ padding: '0.3rem 0.6rem' }}>
+                                    <CheckCircle size={14} /> Fait
+                                  </button>
+                                )}
+                              </div>
+                            </motion.div>
+                          );
+                        })
+                      )}
+
+                      {tasks.length === 0 && !loadingTasks && (
+                        <div style={{ textAlign: 'center', padding: '1.5rem', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)' }}>
+                          <p className="text-muted small">Aucune tâche sur ce lead.</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="interactions-section">

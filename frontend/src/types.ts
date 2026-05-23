@@ -10,6 +10,12 @@ export type LeadStage =
 
 export type InteractionType = 'EMAIL' | 'CALL' | 'MEETING' | 'NOTE';
 
+export type TaskType = 'SALES' | 'MARKETING';
+
+export type TaskStatus = 'OPEN' | 'DONE' | 'CANCELED';
+
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+
 export type AuthUser = {
   id: string;
   email: string;
@@ -57,6 +63,44 @@ export type Interaction = {
     lastName: string | null;
   };
   lead?: Lead;
+};
+
+export type Task = {
+  id: string;
+  title: string;
+  description: string | null;
+  type: TaskType;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string | null;
+  completedAt: string | null;
+  leadId: string | null;
+  assignedToId: string | null;
+  createdById: string;
+  overdueNotifiedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lead?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    ownerId: string;
+  } | null;
+  assignedTo?: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    role: UserRole;
+  } | null;
+  createdBy?: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    role: UserRole;
+  } | null;
 };
 
 export type PaginatedResponse<T> = {

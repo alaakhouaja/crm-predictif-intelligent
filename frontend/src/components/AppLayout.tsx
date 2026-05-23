@@ -6,6 +6,7 @@ import {
   LayoutDashboard, 
   Kanban, 
   Search,
+  CheckSquare,
   ChevronRight,
   ChevronDown,
   BrainCircuit,
@@ -32,6 +33,7 @@ export function AppLayout({ children }: LayoutProps) {
         { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
         { label: 'Leads', path: '/leads', icon: Users },
         { label: 'Pipeline', path: '/pipeline', icon: Kanban },
+        { label: 'Tâches', path: '/tasks', icon: CheckSquare },
         { label: 'Utilisateurs', path: '/users', icon: Users },
       ];
     }
@@ -40,12 +42,14 @@ export function AppLayout({ children }: LayoutProps) {
         { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
         { label: 'Mes leads', path: '/leads', icon: Users },
         { label: 'Mon pipeline', path: '/pipeline', icon: Kanban },
+        { label: 'Tâches', path: '/tasks', icon: CheckSquare },
       ];
     }
     if (user?.role === 'MARKETING') {
       return [
         { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
         { label: 'Leads entrants', path: '/leads', icon: Users },
+        { label: 'Tâches', path: '/tasks', icon: CheckSquare },
       ];
     }
     if (user?.role === 'EXECUTIVE') {
@@ -53,6 +57,7 @@ export function AppLayout({ children }: LayoutProps) {
         { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
         { label: 'Leads', path: '/leads', icon: Users },
         { label: 'Pipeline', path: '/pipeline', icon: Kanban },
+        { label: 'Tâches', path: '/tasks', icon: CheckSquare },
       ];
     }
     return [{ label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard }];

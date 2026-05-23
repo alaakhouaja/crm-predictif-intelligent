@@ -8,6 +8,7 @@ import { PipelineView } from './pages/PipelineView';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { TasksPage } from './pages/TasksPage';
 import { AppLayout } from './components/AppLayout';
 import './App.css';
 
@@ -127,6 +128,14 @@ function AppRoutes() {
         element={
           <Protected>
             <SettingsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/tasks"
+        element={
+          <Protected>
+            <TasksPage />
           </Protected>
         }
       />

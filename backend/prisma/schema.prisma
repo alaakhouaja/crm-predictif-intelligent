@@ -30,6 +30,23 @@ enum InteractionType {
   NOTE
 }
 
+enum TaskType {
+  SALES
+  MARKETING
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+  CANCELED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 model User {
   id            String         @id @default(uuid())
   email         String         @unique
@@ -43,6 +60,8 @@ model User {
   interactions  Interaction[]
   auditLogs     AuditLog[]
   notifications Notification[]
+  tasksAssigned Task[]         @relation("AssignedTasks")
+  tasksCreated  Task[]         @relation("CreatedTasks")
 }
 
 model Lead {
@@ -60,6 +79,7 @@ model Lead {
   ownerId               String
   owner                 User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   interactions          Interaction[]
+  tasks                 Task[]
   consentDate           DateTime?
   dataOrigin            String?
   isAnonymized          Boolean       @default(false)
@@ -83,6 +103,32 @@ model Interaction {
 
   @@index([leadId])
   @@index([userId])
+}
+
+model Task {
+  id                String       @id @default(uuid())
+  title             String
+  description       String?
+  type              TaskType     @default(SALES)
+  status            TaskStatus   @default(OPEN)
+  priority          TaskPriority @default(MEDIUM)
+  dueDate           DateTime?
+  completedAt       DateTime?
+  leadId            String?
+  lead              Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  assignedToId      String?
+  assignedTo        User?        @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdById       String
+  createdBy         User         @relation("CreatedTasks", fields: [createdById], references: [id], onDelete: Cascade)
+  overdueNotifiedAt DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([leadId])
+  @@index([assignedToId])
+  @@index([createdById])
+  @@index([status])
+  @@index([dueDate])
 }
 
 model AuditLog {
