@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, TaskStatus, TaskType } from '@prisma/client';
+import { Prisma, TaskPriority, TaskStatus, TaskType } from '@prisma/client';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -60,10 +60,32 @@ export class TasksService {
     );
   }
 
-  private enforceTaskType(user: AuthUser, requested?: TaskType): TaskType {
-    if (user.role === UserRole.MARKETING) return TaskType.MARKETING;
-    if (user.role === UserRole.SALES) return TaskType.SALES;
-    return requested ?? TaskType.SALES;
+  private allowedTypes(user: AuthUser): TaskType[] {
+    if (user.role === UserRole.ADMIN) {
+      return Object.values(TaskType);
+    }
+    if (user.role === UserRole.SALES) {
+      return [
+        TaskType.SALES,
+        TaskType.CALL,
+        TaskType.MEETING,
+        TaskType.EMAIL_FOLLOW_UP,
+      ];
+    }
+    if (user.role === UserRole.MARKETING) {
+      return [TaskType.MARKETING, TaskType.EMAIL_FOLLOW_UP];
+    }
+    return [];
+  }
+
+  private normalizeType(user: AuthUser, requested?: TaskType): TaskType {
+    const allowed = this.allowedTypes(user);
+    const fallback = allowed[0] ?? TaskType.SALES;
+    const t = requested ?? fallback;
+    if (user.role !== UserRole.ADMIN && !allowed.includes(t)) {
+      throw new ForbiddenException('Task type not allowed for this role');
+    }
+    return t;
   }
 
   private async assertCanUseLead(user: AuthUser, leadId: string) {
@@ -83,7 +105,7 @@ export class TasksService {
     const overdue = await this.prisma.task.findMany({
       where: {
         assignedToId: userId,
-        status: TaskStatus.OPEN,
+        status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
         dueDate: { lt: now },
         overdueNotifiedAt: null,
       },
@@ -136,7 +158,7 @@ export class TasksService {
   }
 
   async create(user: AuthUser, dto: CreateTaskDto) {
-    const type = this.enforceTaskType(user, dto.type);
+    const type = this.normalizeType(user, dto.type);
     const assignedToId = dto.assignedToId ?? user.id;
 
     if (assignedToId !== user.id && user.role !== UserRole.ADMIN) {
@@ -153,6 +175,7 @@ export class TasksService {
         description: dto.description,
         type,
         priority: dto.priority,
+        progress: dto.progress,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         leadId: dto.leadId,
         assignedToId,
@@ -174,6 +197,8 @@ export class TasksService {
       type?: TaskType;
       search?: string;
       overdue?: string;
+      sortBy?: string;
+      sortDir?: string;
       page?: number;
       limit?: number;
     },
@@ -187,6 +212,8 @@ export class TasksService {
       type,
       search,
       overdue,
+      sortBy,
+      sortDir,
       page = 1,
       limit = 10,
     } = query;
@@ -202,48 +229,16 @@ export class TasksService {
       throw new ForbiddenException('You can only query your own tasks');
     }
 
-    const and: Prisma.TaskWhereInput[] = [];
-    if (leadId) and.push({ leadId });
-    if (assignedToId) and.push({ assignedToId });
-    if (type) and.push({ type });
+    const where = this.buildWhere(user, {
+      leadId,
+      assignedToId,
+      status,
+      type,
+      search,
+      overdue,
+    });
 
-    if (overdue === 'true') {
-      and.push({ status: TaskStatus.OPEN, dueDate: { lt: new Date() } });
-    } else if (status) {
-      and.push({ status });
-    }
-
-    if (search && search.trim()) {
-      const q = search.trim();
-      and.push({
-        OR: [
-          { title: { contains: q, mode: 'insensitive' } },
-          { description: { contains: q, mode: 'insensitive' } },
-        ],
-      });
-    }
-
-    if (!this.canReadAll(user)) {
-      if (user.role === UserRole.MARKETING) {
-        and.push({
-          OR: [
-            { type: TaskType.MARKETING },
-            { assignedToId: user.id },
-            { createdById: user.id },
-          ],
-        });
-      } else {
-        and.push({
-          OR: [
-            { assignedToId: user.id },
-            { createdById: user.id },
-            { lead: { ownerId: user.id } },
-          ],
-        });
-      }
-    }
-
-    const where: Prisma.TaskWhereInput = and.length ? { AND: and } : {};
+    const orderBy = this.buildOrderBy(sortBy, sortDir);
 
     const p = Math.max(1, Number(page) || 1);
     const l = Math.max(1, Number(limit) || 10);
@@ -253,7 +248,7 @@ export class TasksService {
       this.prisma.task.findMany({
         where,
         include: this.taskInclude,
-        orderBy: [{ status: 'asc' }, { dueDate: 'asc' }, { updatedAt: 'desc' }],
+        orderBy,
         skip,
         take: l,
       }),
@@ -311,15 +306,22 @@ export class TasksService {
       throw new ForbiddenException('Only admin can re-assign tasks');
     }
 
-    const type = dto.type ? this.enforceTaskType(user, dto.type) : undefined;
+    const type = dto.type ? this.normalizeType(user, dto.type) : undefined;
 
     const status = dto.status;
     const completedAt =
-      status === TaskStatus.DONE && !dto.completedAt
-        ? new Date()
-        : dto.completedAt
+      status === TaskStatus.DONE
+        ? dto.completedAt
           ? new Date(dto.completedAt)
+          : new Date()
+        : status
+          ? null
           : undefined;
+
+    const progress =
+      status === TaskStatus.DONE
+        ? 100
+        : dto.progress;
 
     const task = await this.prisma.task.update({
       where: { id },
@@ -329,12 +331,13 @@ export class TasksService {
         type,
         priority: dto.priority,
         status,
+        progress,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         completedAt,
         leadId: dto.leadId,
         assignedToId: dto.assignedToId,
         overdueNotifiedAt:
-          status && status !== TaskStatus.OPEN ? null : undefined,
+          status && status !== TaskStatus.OPEN && status !== TaskStatus.IN_PROGRESS ? null : undefined,
       },
       include: this.taskInclude,
     });
@@ -355,5 +358,130 @@ export class TasksService {
     }
 
     return this.prisma.task.delete({ where: { id: existing.id } });
+  }
+
+  async getStats(
+    user: AuthUser,
+    query: {
+      leadId?: string;
+      assignedToId?: string;
+      status?: TaskStatus;
+      type?: TaskType;
+      search?: string;
+      overdue?: string;
+    },
+  ) {
+    await this.ensureOverdueNotifications(user.id);
+
+    const where = this.buildWhere(user, query);
+    const now = new Date();
+
+    const [total, completed, overdueCount, highPriority] = await Promise.all([
+      this.prisma.task.count({ where }),
+      this.prisma.task.count({
+        where: { AND: [where, { status: TaskStatus.DONE }] },
+      }),
+      this.prisma.task.count({
+        where: {
+          AND: [
+            where,
+            {
+              status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+              dueDate: { lt: now },
+            },
+          ],
+        },
+      }),
+      this.prisma.task.count({
+        where: {
+          AND: [
+            where,
+            {
+              priority: TaskPriority.HIGH,
+              status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    return {
+      total,
+      completed,
+      overdue: overdueCount,
+      highPriority,
+    };
+  }
+
+  private buildWhere(
+    user: AuthUser,
+    query: {
+      leadId?: string;
+      assignedToId?: string;
+      status?: TaskStatus;
+      type?: TaskType;
+      search?: string;
+      overdue?: string;
+    },
+  ): Prisma.TaskWhereInput {
+    const { leadId, assignedToId, status, type, search, overdue } = query;
+    const and: Prisma.TaskWhereInput[] = [];
+
+    if (leadId) and.push({ leadId });
+    if (assignedToId) and.push({ assignedToId });
+    if (type) and.push({ type });
+
+    if (overdue === 'true') {
+      and.push({
+        status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+        dueDate: { lt: new Date() },
+      });
+    } else if (status) {
+      and.push({ status });
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      and.push({
+        OR: [
+          { title: { contains: q, mode: 'insensitive' } },
+          { description: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (!this.canReadAll(user)) {
+      if (user.role === UserRole.MARKETING) {
+        and.push({
+          OR: [
+            { type: TaskType.MARKETING },
+            { assignedToId: user.id },
+            { createdById: user.id },
+          ],
+        });
+      } else {
+        and.push({
+          OR: [
+            { assignedToId: user.id },
+            { createdById: user.id },
+            { lead: { ownerId: user.id } },
+          ],
+        });
+      }
+    }
+
+    return and.length ? { AND: and } : {};
+  }
+
+  private buildOrderBy(sortBy?: string, sortDir?: string) {
+    const dir = sortDir === 'asc' ? 'asc' : 'desc';
+
+    if (sortBy === 'priority') return [{ priority: dir }, { updatedAt: 'desc' }] as const;
+    if (sortBy === 'dueDate') return [{ dueDate: dir }, { updatedAt: 'desc' }] as const;
+    if (sortBy === 'status') return [{ status: dir }, { updatedAt: 'desc' }] as const;
+    if (sortBy === 'progress') return [{ progress: dir }, { updatedAt: 'desc' }] as const;
+    if (sortBy === 'createdAt') return [{ createdAt: dir }, { updatedAt: 'desc' }] as const;
+
+    return [{ status: 'asc' }, { dueDate: 'asc' }, { updatedAt: 'desc' }] as const;
   }
 }

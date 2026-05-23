@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TaskPriority, TaskType } from '@prisma/client';
-import { IsDateString, IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsDateString, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 
 export class CreateTaskDto {
   @ApiProperty()
@@ -22,6 +22,13 @@ export class CreateTaskDto {
   @IsEnum(TaskPriority)
   priority?: TaskPriority;
 
+  @ApiPropertyOptional({ description: '0-100' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  progress?: number;
+
   @ApiPropertyOptional({ description: 'ISO date (ex: 2026-05-23T18:00:00.000Z)' })
   @IsOptional()
   @IsDateString()
@@ -37,4 +44,3 @@ export class CreateTaskDto {
   @IsUUID()
   assignedToId?: string;
 }
-

@@ -33,10 +33,15 @@ enum InteractionType {
 enum TaskType {
   SALES
   MARKETING
+  SUPPORT
+  CALL
+  MEETING
+  EMAIL_FOLLOW_UP
 }
 
 enum TaskStatus {
   OPEN
+  IN_PROGRESS
   DONE
   CANCELED
 }
@@ -112,6 +117,7 @@ model Task {
   type              TaskType     @default(SALES)
   status            TaskStatus   @default(OPEN)
   priority          TaskPriority @default(MEDIUM)
+  progress          Int          @default(0)
   dueDate           DateTime?
   completedAt       DateTime?
   leadId            String?

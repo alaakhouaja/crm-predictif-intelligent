@@ -5,9 +5,12 @@ import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import type { AuthUser, PaginatedResponse, Task, TaskPriority, TaskStatus, TaskType } from '../types';
 
-const statuses: TaskStatus[] = ['OPEN', 'DONE', 'CANCELED'];
+const statuses: TaskStatus[] = ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELED'];
 const priorities: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
-const types: TaskType[] = ['SALES', 'MARKETING'];
+const types: TaskType[] = ['SALES', 'MARKETING', 'SUPPORT', 'CALL', 'MEETING', 'EMAIL_FOLLOW_UP'];
+
+type SortBy = '' | 'priority' | 'dueDate' | 'status' | 'progress' | 'createdAt';
+type SortDir = 'asc' | 'desc';
 
 export function TasksPage() {
   const { token, user } = useAuth();
@@ -21,14 +24,17 @@ export function TasksPage() {
   const [filterType, setFilterType] = useState<TaskType | ''>('');
   const [filterOverdue, setFilterOverdue] = useState(false);
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<SortBy>('');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const canCreate = user?.role !== 'EXECUTIVE';
   const isAdmin = user?.role === 'ADMIN';
 
-  const lockedType = useMemo<TaskType | null>(() => {
-    if (user?.role === 'MARKETING') return 'MARKETING';
-    if (user?.role === 'SALES') return 'SALES';
-    return null;
+  const allowedTypes = useMemo<TaskType[]>(() => {
+    if (user?.role === 'ADMIN') return types;
+    if (user?.role === 'SALES') return ['SALES', 'CALL', 'MEETING', 'EMAIL_FOLLOW_UP'];
+    if (user?.role === 'MARKETING') return ['MARKETING', 'EMAIL_FOLLOW_UP'];
+    return [];
   }, [user?.role]);
 
   const [users, setUsers] = useState<AuthUser[]>([]);
@@ -38,6 +44,7 @@ export function TasksPage() {
   const [description, setDescription] = useState('');
   const [type, setType] = useState<TaskType>('SALES');
   const [priority, setPriority] = useState<TaskPriority>('MEDIUM');
+  const [progress, setProgress] = useState(0);
   const [dueDate, setDueDate] = useState('');
   const [assignedToId, setAssignedToId] = useState('');
 
@@ -48,8 +55,11 @@ export function TasksPage() {
   const [editType, setEditType] = useState<TaskType>('SALES');
   const [editPriority, setEditPriority] = useState<TaskPriority>('MEDIUM');
   const [editStatus, setEditStatus] = useState<TaskStatus>('OPEN');
+  const [editProgress, setEditProgress] = useState(0);
   const [editDueDate, setEditDueDate] = useState('');
   const [editAssignedToId, setEditAssignedToId] = useState('');
+
+  const [stats, setStats] = useState<{ total: number; completed: number; overdue: number; highPriority: number } | null>(null);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -63,6 +73,8 @@ export function TasksPage() {
       if (filterType) params.set('type', filterType);
       if (filterOverdue) params.set('overdue', 'true');
       if (search.trim()) params.set('search', search.trim());
+      if (sortBy) params.set('sortBy', sortBy);
+      if (sortDir) params.set('sortDir', sortDir);
 
       const res = await api<PaginatedResponse<Task>>(`/tasks?${params.toString()}`, { token });
       if (res) {
@@ -74,7 +86,22 @@ export function TasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterOverdue, filterStatus, filterType, page, search, token]);
+  }, [filterOverdue, filterStatus, filterType, page, search, sortBy, sortDir, token]);
+
+  const loadStats = useCallback(async () => {
+    if (!token) return;
+    try {
+      const params = new URLSearchParams();
+      if (filterStatus) params.set('status', filterStatus);
+      if (filterType) params.set('type', filterType);
+      if (filterOverdue) params.set('overdue', 'true');
+      if (search.trim()) params.set('search', search.trim());
+      const res = await api<{ total: number; completed: number; overdue: number; highPriority: number }>(`/tasks/stats?${params.toString()}`, { token });
+      setStats(res);
+    } catch {
+      setStats(null);
+    }
+  }, [filterOverdue, filterStatus, filterType, search, token]);
 
   const loadUsers = useCallback(async () => {
     if (!token || !isAdmin) return;
@@ -92,20 +119,27 @@ export function TasksPage() {
   }, [load]);
 
   useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
+  useEffect(() => {
     void loadUsers();
   }, [loadUsers]);
 
   useEffect(() => {
-    if (lockedType) setType(lockedType);
-  }, [lockedType]);
+    if (allowedTypes.length && !allowedTypes.includes(type)) {
+      setType(allowedTypes[0]);
+    }
+  }, [allowedTypes, type]);
 
   function openCreate() {
     if (!canCreate) return;
     setTitle('');
     setDescription('');
     setPriority('MEDIUM');
+    setProgress(0);
     setDueDate('');
-    setType(lockedType ?? 'SALES');
+    setType(allowedTypes[0] ?? 'SALES');
     setAssignedToId('');
     setModalOpen(true);
   }
@@ -121,14 +155,16 @@ export function TasksPage() {
         body: JSON.stringify({
           title,
           description: description || undefined,
-          type: lockedType ?? type,
+          type,
           priority,
+          progress,
           dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
           assignedToId: isAdmin && assignedToId ? assignedToId : undefined,
         }),
       });
       setModalOpen(false);
       await load();
+      await loadStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Création impossible');
     }
@@ -148,6 +184,7 @@ export function TasksPage() {
     setEditType(t.type);
     setEditPriority(t.priority);
     setEditStatus(t.status);
+    setEditProgress(t.progress ?? 0);
     setEditDueDate(t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 16) : '');
     setEditAssignedToId(t.assignedToId ?? '');
     setEditModalOpen(true);
@@ -164,9 +201,10 @@ export function TasksPage() {
         body: JSON.stringify({
           title: editTitle,
           description: editDescription || undefined,
-          type: lockedType ?? editType,
+          type: editType,
           priority: editPriority,
           status: editStatus,
+          progress: editProgress,
           dueDate: editDueDate ? new Date(editDueDate).toISOString() : undefined,
           assignedToId: isAdmin && editAssignedToId ? editAssignedToId : undefined,
         }),
@@ -174,6 +212,7 @@ export function TasksPage() {
       setEditModalOpen(false);
       setEditing(null);
       await load();
+      await loadStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Modification impossible');
     }
@@ -188,6 +227,7 @@ export function TasksPage() {
         body: JSON.stringify({ status: 'DONE' }),
       });
       await load();
+      await loadStats();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Mise à jour impossible');
     }
@@ -202,6 +242,7 @@ export function TasksPage() {
         body: JSON.stringify({ status: 'CANCELED' }),
       });
       await load();
+      await loadStats();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Mise à jour impossible');
     }
@@ -214,6 +255,13 @@ export function TasksPage() {
   }
 
   const now = Date.now();
+
+  function initialsOf(u: { firstName: string | null; lastName: string | null; email: string }) {
+    const a = (u.firstName?.[0] ?? '').toUpperCase();
+    const b = (u.lastName?.[0] ?? '').toUpperCase();
+    const i = `${a}${b}` || (u.email?.[0] ?? 'U').toUpperCase();
+    return i;
+  }
 
   return (
     <div className="page">
@@ -242,6 +290,22 @@ export function TasksPage() {
         </div>
       )}
 
+      {stats && (
+        <div className="grid-stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+          {[
+            { label: 'Total Tasks', value: stats.total, color: '#7c3aed' },
+            { label: 'Completed', value: stats.completed, color: '#10b981' },
+            { label: 'Overdue', value: stats.overdue, color: '#ef4444' },
+            { label: 'High Priority', value: stats.highPriority, color: '#f59e0b' },
+          ].map((s) => (
+            <div key={s.label} className="card" style={{ padding: '1.25rem', borderLeft: `3px solid ${s.color}` }}>
+              <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>{s.label}</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '0.25rem' }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <section className="card" style={{ padding: '1.5rem' }}>
         <div className="flex-between" style={{ marginBottom: '1rem' }}>
           <div className="row-gap">
@@ -255,6 +319,25 @@ export function TasksPage() {
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               />
+            </div>
+            <div>
+              <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                Trier
+              </div>
+              <div className="row-gap">
+                <select value={sortBy} onChange={(e) => { setSortBy(e.target.value as SortBy); setPage(1); }} style={{ width: '180px' }}>
+                  <option value="">Par défaut</option>
+                  <option value="priority">Priorité</option>
+                  <option value="dueDate">Échéance</option>
+                  <option value="status">Statut</option>
+                  <option value="progress">Progress</option>
+                  <option value="createdAt">Création</option>
+                </select>
+                <select value={sortDir} onChange={(e) => { setSortDir(e.target.value as SortDir); setPage(1); }} style={{ width: '120px' }}>
+                  <option value="desc">Desc</option>
+                  <option value="asc">Asc</option>
+                </select>
+              </div>
             </div>
             <div>
               <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.25rem' }}>
@@ -312,17 +395,25 @@ export function TasksPage() {
             <thead>
               <tr>
                 <th>Titre</th>
+                <th>Client/Lead</th>
                 <th>Type</th>
                 <th>Priorité</th>
-                {(isAdmin || user?.role === 'EXECUTIVE') && <th>Assigné</th>}
+                <th>Assigné</th>
+                <th>Progress</th>
                 <th>Échéance</th>
                 <th>Statut</th>
+                <th>Création</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {tasks.map((t) => {
-                const isOverdue = t.status === 'OPEN' && t.dueDate && new Date(t.dueDate).getTime() < now;
+                const isOverdue =
+                  (t.status === 'OPEN' || t.status === 'IN_PROGRESS') &&
+                  t.dueDate &&
+                  new Date(t.dueDate).getTime() < now;
+                const assigned = t.assignedTo ?? null;
+                const lead = t.lead ?? null;
                 return (
                   <motion.tr key={t.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <td style={{ fontWeight: 700 }}>
@@ -336,6 +427,16 @@ export function TasksPage() {
                         </div>
                       )}
                     </td>
+                    <td className="small">
+                      {lead ? (
+                        <div>
+                          <div style={{ fontWeight: 700 }}>{lead.firstName} {lead.lastName}</div>
+                          <div className="text-muted x-small">{lead.email}</div>
+                        </div>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
                     <td>
                       <span className={`badge ${t.type === 'MARKETING' ? 'badge-orange' : 'badge-blue'}`}>{t.type}</span>
                     </td>
@@ -344,18 +445,48 @@ export function TasksPage() {
                         {t.priority}
                       </span>
                     </td>
-                    {(isAdmin || user?.role === 'EXECUTIVE') && (
-                      <td className="small text-muted">
-                        {t.assignedTo
-                          ? `${t.assignedTo.firstName ?? ''} ${t.assignedTo.lastName ?? ''}`.trim() || t.assignedTo.email
-                          : '—'}
-                      </td>
-                    )}
+                    <td>
+                      {assigned ? (
+                        <div className="flex-center" style={{ gap: '0.6rem' }}>
+                          <div style={{ width: '28px', height: '28px', borderRadius: '10px', background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
+                            {initialsOf(assigned)}
+                          </div>
+                          <div>
+                            <div className="small" style={{ fontWeight: 700 }}>
+                              {`${assigned.firstName ?? ''} ${assigned.lastName ?? ''}`.trim() || assigned.email}
+                            </div>
+                            <div className="text-muted x-small">{assigned.role}</div>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ minWidth: '140px' }}>
+                        <div className="flex-between x-small" style={{ marginBottom: '6px' }}>
+                          <span className="text-muted">{t.progress ?? 0}%</span>
+                        </div>
+                        <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '10px', overflow: 'hidden' }}>
+                          <motion.div
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.max(0, Math.min(100, t.progress ?? 0))}%` }}
+                            style={{
+                              height: '100%',
+                              background: 'linear-gradient(90deg, var(--primary), var(--primary-light))',
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </td>
                     <td className="small text-muted">
                       {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
                     </td>
                     <td>
                       <span className={`badge ${statusBadge(t.status)}`}>{t.status}</span>
+                    </td>
+                    <td className="small text-muted">
+                      {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}
                     </td>
                     <td>
                       <div className="row-gap">
@@ -364,12 +495,12 @@ export function TasksPage() {
                             <Pencil size={14} /> Éditer
                           </button>
                         )}
-                        {canUpdate(t) && t.status === 'OPEN' && (
+                        {canUpdate(t) && (t.status === 'OPEN' || t.status === 'IN_PROGRESS') && (
                           <>
-                            <button className="secondary small" onClick={() => void markDone(t)} style={{ padding: '0.4rem 0.6rem' }}>
+                            <button className="secondary small" onClick={() => void markDone(t)} style={{ padding: '0.4rem 0.6rem', color: 'var(--success)' }}>
                               <CheckCircle2 size={14} /> Terminer
                             </button>
-                            <button className="secondary small" onClick={() => void cancelTask(t)} style={{ padding: '0.4rem 0.6rem' }}>
+                            <button className="secondary small" onClick={() => void cancelTask(t)} style={{ padding: '0.4rem 0.6rem', color: 'var(--danger)' }}>
                               <Ban size={14} /> Annuler
                             </button>
                           </>
@@ -440,9 +571,11 @@ export function TasksPage() {
 
                 <div className="form-group">
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Type</label>
-                  <select value={lockedType ?? type} onChange={(e) => setType(e.target.value as TaskType)} disabled={!!lockedType}>
-                    {types.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                  <select value={type} onChange={(e) => setType(e.target.value as TaskType)}>
+                    {allowedTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -459,6 +592,11 @@ export function TasksPage() {
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Échéance</label>
                   <input type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </div>
+
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Progress (0-100)</label>
+                  <input type="number" min={0} max={100} value={progress} onChange={(e) => setProgress(Math.max(0, Math.min(100, Number(e.target.value))))} />
                 </div>
 
                 {isAdmin && (
@@ -518,9 +656,11 @@ export function TasksPage() {
 
                 <div className="form-group">
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Type</label>
-                  <select value={lockedType ?? editType} onChange={(e) => setEditType(e.target.value as TaskType)} disabled={!!lockedType}>
-                    {types.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                  <select value={editType} onChange={(e) => setEditType(e.target.value as TaskType)} disabled={!isAdmin && allowedTypes.length === 0}>
+                    {(isAdmin ? types : allowedTypes).map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -546,6 +686,11 @@ export function TasksPage() {
                 <div className="form-group">
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Échéance</label>
                   <input type="datetime-local" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
+                </div>
+
+                <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                  <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Progress (0-100)</label>
+                  <input type="number" min={0} max={100} value={editProgress} onChange={(e) => setEditProgress(Math.max(0, Math.min(100, Number(e.target.value))))} />
                 </div>
 
                 {isAdmin && (

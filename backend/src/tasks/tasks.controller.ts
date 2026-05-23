@@ -50,6 +50,8 @@ export class TasksController {
   @ApiQuery({ name: 'type', enum: TaskType, required: false })
   @ApiQuery({ name: 'search', required: false, type: String })
   @ApiQuery({ name: 'overdue', required: false, type: String })
+  @ApiQuery({ name: 'sortBy', required: false, type: String })
+  @ApiQuery({ name: 'sortDir', required: false, type: String })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiOperation({ summary: 'Lister les tâches' })
@@ -61,6 +63,8 @@ export class TasksController {
     @Query('type') type?: TaskType,
     @Query('search') search?: string,
     @Query('overdue') overdue?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortDir') sortDir?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
@@ -71,8 +75,37 @@ export class TasksController {
       type,
       search,
       overdue,
+      sortBy,
+      sortDir,
       page,
       limit,
+    });
+  }
+
+  @Get('stats')
+  @ApiQuery({ name: 'leadId', required: false })
+  @ApiQuery({ name: 'assignedToId', required: false })
+  @ApiQuery({ name: 'status', enum: TaskStatus, required: false })
+  @ApiQuery({ name: 'type', enum: TaskType, required: false })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'overdue', required: false, type: String })
+  @ApiOperation({ summary: 'Statistiques tâches (cartes dashboard)' })
+  stats(
+    @CurrentUser() user: AuthUser,
+    @Query('leadId') leadId?: string,
+    @Query('assignedToId') assignedToId?: string,
+    @Query('status') status?: TaskStatus,
+    @Query('type') type?: TaskType,
+    @Query('search') search?: string,
+    @Query('overdue') overdue?: string,
+  ) {
+    return this.tasks.getStats(user, {
+      leadId,
+      assignedToId,
+      status,
+      type,
+      search,
+      overdue,
     });
   }
 

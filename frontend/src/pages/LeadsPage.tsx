@@ -942,7 +942,10 @@ export function LeadsPage() {
                         </div>
                       ) : (
                         tasks.map((t, idx) => {
-                          const isOverdue = t.status === 'OPEN' && t.dueDate && new Date(t.dueDate).getTime() < Date.now();
+                          const isOverdue =
+                            (t.status === 'OPEN' || t.status === 'IN_PROGRESS') &&
+                            t.dueDate &&
+                            new Date(t.dueDate).getTime() < Date.now();
                           return (
                             <motion.div
                               key={t.id}
@@ -975,7 +978,7 @@ export function LeadsPage() {
                                   </span>
                                 </div>
                                 {canUpdateTask(t) && t.status === 'OPEN' && (
-                                  <button className="secondary small" onClick={() => void markTaskDone(t.id)} style={{ padding: '0.3rem 0.6rem' }}>
+                                  <button className="secondary small" onClick={() => void markTaskDone(t.id)} style={{ padding: '0.3rem 0.6rem', color: 'var(--success)' }}>
                                     <CheckCircle size={14} /> Fait
                                   </button>
                                 )}

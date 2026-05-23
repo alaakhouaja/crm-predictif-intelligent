@@ -10,9 +10,15 @@ export type LeadStage =
 
 export type InteractionType = 'EMAIL' | 'CALL' | 'MEETING' | 'NOTE';
 
-export type TaskType = 'SALES' | 'MARKETING';
+export type TaskType =
+  | 'SALES'
+  | 'MARKETING'
+  | 'SUPPORT'
+  | 'CALL'
+  | 'MEETING'
+  | 'EMAIL_FOLLOW_UP';
 
-export type TaskStatus = 'OPEN' | 'DONE' | 'CANCELED';
+export type TaskStatus = 'OPEN' | 'IN_PROGRESS' | 'DONE' | 'CANCELED';
 
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -72,6 +78,7 @@ export type Task = {
   type: TaskType;
   status: TaskStatus;
   priority: TaskPriority;
+  progress: number;
   dueDate: string | null;
   completedAt: string | null;
   leadId: string | null;
