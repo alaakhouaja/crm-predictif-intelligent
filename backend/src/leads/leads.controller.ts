@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Body,
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -62,20 +64,40 @@ export class LeadsController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const allowed = new Set(['text/csv', 'application/vnd.ms-excel']);
+        if (!allowed.has(file.mimetype)) {
+          cb(new BadRequestException('Unsupported file type'), false);
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
   @ApiOperation({ summary: 'Import leads from CSV' })
   importLeads(
     @CurrentUser() user: AuthUser,
     @UploadedFile() file: Express.Multer.File,
   ) {
+    if (!file) {
+      throw new BadRequestException('Missing file');
+    }
     return this.leads.importFromCsv(user, file.buffer);
   }
 
   @Post('webhook')
   @ApiOperation({ summary: 'Webhook for external form capture' })
-  webhookCapture(@Body() dto: CreateLeadDto, @Query('secret') secret?: string) {
+  webhookCapture(
+    @Body() dto: CreateLeadDto,
+    @Headers('x-webhook-secret') secretHeader?: string,
+    @Query('secret') secretQuery?: string,
+  ) {
     const expected = process.env.WEBHOOK_SECRET;
-    if (!expected || secret !== expected) {
+    const provided = secretHeader ?? secretQuery;
+    if (!expected || provided !== expected) {
       throw new ForbiddenException('Invalid webhook secret');
     }
     return this.leads.createFromWebhook(dto);

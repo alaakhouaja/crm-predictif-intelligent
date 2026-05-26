@@ -15,7 +15,7 @@ type SortDir = 'asc' | 'desc';
 type ViewMode = 'table' | 'kanban';
 
 export function TasksPage() {
-  const { token, user } = useAuth();
+  const { user } = useAuth();
   const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
   const [tasks, setTasks] = useState<Task[]>([]);
   const [page, setPage] = useState(1);
@@ -69,7 +69,7 @@ export function TasksPage() {
   const [stats, setStats] = useState<{ total: number; completed: number; overdue: number; highPriority: number } | null>(null);
 
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!user) return;
     setError(null);
     setLoading(true);
     try {
@@ -84,7 +84,7 @@ export function TasksPage() {
       if (sortBy) params.set('sortBy', sortBy);
       if (sortDir) params.set('sortDir', sortDir);
 
-      const res = await api<PaginatedResponse<Task>>(`/tasks?${params.toString()}`, { token });
+      const res = await api<PaginatedResponse<Task>>(`/tasks?${params.toString()}`);
       if (res) {
         setTasks(res.data);
         setLastPage(view === 'kanban' ? 1 : res.lastPage);
@@ -94,64 +94,66 @@ export function TasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterOverdue, filterStatus, filterType, page, search, sortBy, sortDir, token, view]);
+  }, [filterOverdue, filterStatus, filterType, page, search, sortBy, sortDir, user, view]);
 
   const loadStats = useCallback(async () => {
-    if (!token) return;
+    if (!user) return;
     try {
       const params = new URLSearchParams();
       if (filterStatus) params.set('status', filterStatus);
       if (filterType) params.set('type', filterType);
       if (filterOverdue) params.set('overdue', 'true');
       if (search.trim()) params.set('search', search.trim());
-      const res = await api<{ total: number; completed: number; overdue: number; highPriority: number }>(`/tasks/stats?${params.toString()}`, { token });
+      const res = await api<{ total: number; completed: number; overdue: number; highPriority: number }>(`/tasks/stats?${params.toString()}`);
       setStats(res);
     } catch {
       setStats(null);
     }
-  }, [filterOverdue, filterStatus, filterType, search, token]);
+  }, [filterOverdue, filterStatus, filterType, search, user]);
 
   const loadUsers = useCallback(async () => {
-    if (!token || !isAdmin) return;
+    if (!user || !isAdmin) return;
     try {
-      const res = await api<PaginatedResponse<AuthUser>>('/users?page=1&limit=200', { token });
+      const res = await api<PaginatedResponse<AuthUser>>(
+        '/users?page=1&limit=200',
+      );
       if (res?.data) setUsers(res.data);
       else setUsers([]);
     } catch {
       setUsers([]);
     }
-  }, [isAdmin, token]);
+  }, [isAdmin, user]);
 
   const loadTaskDetails = useCallback(async (taskId: string) => {
-    if (!token) return;
+    if (!user) return;
     try {
-      const t = await api<Task>(`/tasks/${taskId}`, { token });
+      const t = await api<Task>(`/tasks/${taskId}`);
       setEditing(t);
       setAttachments(t.attachments ?? []);
     } catch {
       setAttachments([]);
     }
-  }, [token]);
+  }, [user]);
 
   const loadActivity = useCallback(async (taskId: string) => {
-    if (!token) return;
+    if (!user) return;
     try {
-      const logs = await api<AuditLogEntry[]>(`/tasks/${taskId}/activity`, { token });
+      const logs = await api<AuditLogEntry[]>(`/tasks/${taskId}/activity`);
       setActivityLogs(logs ?? []);
     } catch {
       setActivityLogs([]);
     }
-  }, [token]);
+  }, [user]);
 
   const loadAttachments = useCallback(async (taskId: string) => {
-    if (!token) return;
+    if (!user) return;
     try {
-      const list = await api<TaskAttachment[]>(`/tasks/${taskId}/attachments`, { token });
+      const list = await api<TaskAttachment[]>(`/tasks/${taskId}/attachments`);
       setAttachments(list ?? []);
     } catch {
       setAttachments([]);
     }
-  }, [token]);
+  }, [user]);
 
   useEffect(() => {
     void load();
@@ -189,12 +191,11 @@ export function TasksPage() {
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
-    if (!token) return;
+    if (!user) return;
     setError(null);
     try {
       await api<Task>('/tasks', {
         method: 'POST',
-        token,
         body: JSON.stringify({
           title,
           description: description || undefined,
@@ -244,12 +245,12 @@ export function TasksPage() {
 
   async function onUpdate(e: FormEvent) {
     e.preventDefault();
-    if (!token || !editing) return;
+    if (!user || !editing) return;
+    if (!canUpdate(editing)) return;
     setError(null);
     try {
       await api<Task>(`/tasks/${editing.id}`, {
         method: 'PATCH',
-        token,
         body: JSON.stringify({
           title: editTitle,
           description: editDescription || undefined,
@@ -271,11 +272,10 @@ export function TasksPage() {
   }
 
   async function markDone(task: Task) {
-    if (!token) return;
+    if (!user) return;
     try {
       await api<Task>(`/tasks/${task.id}`, {
         method: 'PATCH',
-        token,
         body: JSON.stringify({ status: 'DONE' }),
       });
       await load();
@@ -286,11 +286,10 @@ export function TasksPage() {
   }
 
   async function cancelTask(task: Task) {
-    if (!token) return;
+    if (!user) return;
     try {
       await api<Task>(`/tasks/${task.id}`, {
         method: 'PATCH',
-        token,
         body: JSON.stringify({ status: 'CANCELED' }),
       });
       await load();
@@ -324,28 +323,28 @@ export function TasksPage() {
   }
 
   async function uploadAttachment(file: File) {
-    if (!token || !editing) return;
+    if (!user || !editing) return;
     setUploading(true);
     try {
       const form = new FormData();
       form.append('file', file);
       await api<TaskAttachment>(`/tasks/${editing.id}/attachments`, {
         method: 'POST',
-        token,
         body: form,
         headers: {},
       });
       await loadAttachments(editing.id);
       await loadTaskDetails(editing.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Upload impossible');
     } finally {
       setUploading(false);
     }
   }
 
   async function downloadAttachment(att: TaskAttachment) {
-    if (!token) return;
     const res = await fetch(`${API}/tasks/attachments/${att.id}/download`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     });
     if (!res.ok) {
       alert('Téléchargement impossible');
@@ -363,10 +362,10 @@ export function TasksPage() {
   }
 
   async function removeAttachment(att: TaskAttachment) {
-    if (!token || !editing) return;
+    if (!user || !editing) return;
     if (!window.confirm('Supprimer cette pièce jointe ?')) return;
     try {
-      await api(`/tasks/attachments/${att.id}`, { method: 'DELETE', token });
+      await api(`/tasks/attachments/${att.id}`, { method: 'DELETE' });
       await loadAttachments(editing.id);
       await loadTaskDetails(editing.id);
     } catch (err) {
@@ -410,13 +409,12 @@ export function TasksPage() {
     const prevStatus = result.source.droppableId as TaskStatus;
     if (nextStatus === prevStatus && result.destination.index === result.source.index) return;
     const t = tasks.find((x) => x.id === taskId);
-    if (!t || !canUpdate(t) || !token) return;
+    if (!t || !canUpdate(t) || !user) return;
 
     setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, status: nextStatus } : x)));
     try {
       await api<Task>(`/tasks/${taskId}`, {
         method: 'PATCH',
-        token,
         body: JSON.stringify({ status: nextStatus }),
       });
       await load();
@@ -934,6 +932,7 @@ export function TasksPage() {
               {(() => {
                 const readOnly = !canUpdate(editing);
                 return (
+                  <>
               <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
                 <div>
                   <h2 style={{ margin: 0 }}>{readOnly ? 'Détails tâche' : 'Modifier tâche'}</h2>
@@ -951,7 +950,7 @@ export function TasksPage() {
                 </button>
               </div>
 
-              <form onSubmit={readOnly ? (e) => e.preventDefault() : onUpdate} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              <form onSubmit={onUpdate} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Titre</label>
                   <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required disabled={readOnly} />
@@ -1115,6 +1114,7 @@ export function TasksPage() {
                   </div>
                 </div>
               </div>
+                  </>
               );
               })()}
             </motion.div>

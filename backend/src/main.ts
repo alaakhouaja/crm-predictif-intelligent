@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { PrismaService } from './prisma/prisma.service';
 
@@ -24,14 +25,17 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  app.useGlobalFilters(new AllExceptionsFilter());
 
-  const swagger = new DocumentBuilder()
-    .setTitle('CRM Prédictif API')
-    .setDescription('Partie 1 — Auth JWT, rôles, gestion des leads')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  SwaggerModule.setup('api', app, SwaggerModule.createDocument(app, swagger));
+  if (process.env.NODE_ENV !== 'production') {
+    const swagger = new DocumentBuilder()
+      .setTitle('CRM Prédictif API')
+      .setDescription('Partie 1 — Auth JWT, rôles, gestion des leads')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    SwaggerModule.setup('api', app, SwaggerModule.createDocument(app, swagger));
+  }
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);

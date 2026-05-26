@@ -16,6 +16,30 @@ export class AuditInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest();
     const { method, url, user, body } = request;
 
+    const redact = (value: any): any => {
+      if (value === null || value === undefined) return value;
+      if (Buffer.isBuffer(value)) return '[REDACTED]';
+      if (value instanceof Date) return value.toISOString();
+      if (Array.isArray(value)) return value.map((v) => redact(v));
+      if (typeof value !== 'object') return value;
+
+      const out: Record<string, any> = {};
+      for (const [k, v] of Object.entries(value)) {
+        const key = k.toLowerCase();
+        if (
+          key.includes('password') ||
+          key.includes('token') ||
+          key === 'authorization' ||
+          key.includes('secret')
+        ) {
+          out[k] = '[REDACTED]';
+          continue;
+        }
+        out[k] = redact(v);
+      }
+      return out;
+    };
+
     // Only log write operations
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && user) {
       return next.handle().pipe(
@@ -32,7 +56,7 @@ export class AuditInterceptor implements NestInterceptor {
                 action: method,
                 entityType,
                 entityId: String(entityId),
-                newValue: body ? body : undefined,
+                newValue: body ? redact(body) : undefined,
                 // In a full system, we would fetch the oldValue before the update
               },
             });

@@ -177,30 +177,51 @@ export class LeadsService {
       throw new BadRequestException('No valid leads found in CSV');
     }
 
-    let importedCount = 0;
-    let updatedCount = 0;
+    const byEmail = new Map<string, (typeof results)[number]>();
+    for (const r of results) byEmail.set(r.email, r);
+    const unique = Array.from(byEmail.values());
 
-    for (const leadData of results) {
-      const existing = await this.prisma.lead.findFirst({
-        where: { email: leadData.email },
-      });
+    const emails = unique.map((x) => x.email);
+    const existing = await this.prisma.lead.findMany({
+      where: { email: { in: emails } },
+      select: { id: true, email: true },
+    });
+    const existingByEmail = new Map(existing.map((x) => [x.email, x.id]));
 
-      if (existing) {
-        await this.prisma.lead.update({
-          where: { id: existing.id },
-          data: {
-            ...leadData,
-            updatedAt: new Date(),
-          },
-        });
-        updatedCount++;
+    const toCreate: any[] = [];
+    const toUpdate: { id: string; data: any }[] = [];
+
+    for (const leadData of unique) {
+      const id = existingByEmail.get(leadData.email);
+      if (id) {
+        toUpdate.push({ id, data: leadData });
       } else {
-        await this.prisma.lead.create({
-          data: leadData,
-        });
-        importedCount++;
+        toCreate.push(leadData);
       }
     }
+
+    const runBatches = async (ops: Array<() => any>) => {
+      const chunkSize = 100;
+      for (let i = 0; i < ops.length; i += chunkSize) {
+        const chunk = ops.slice(i, i + chunkSize).map((fn) => fn());
+        await this.prisma.$transaction(chunk);
+      }
+    };
+
+    await runBatches(
+      toCreate.map((leadData) => () => this.prisma.lead.create({ data: leadData })),
+    );
+    await runBatches(
+      toUpdate.map(({ id, data }) => () =>
+        this.prisma.lead.update({
+          where: { id },
+          data: { ...data, updatedAt: new Date() },
+        }),
+      ),
+    );
+
+    const importedCount = toCreate.length;
+    const updatedCount = toUpdate.length;
 
     return {
       message: `${importedCount} leads créés, ${updatedCount} leads mis à jour avec succès.`,

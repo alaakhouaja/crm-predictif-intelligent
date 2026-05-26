@@ -12,22 +12,22 @@ type CrmNotification = {
 };
 
 export function NotificationBell() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState<CrmNotification[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const unreadCount = notifications.filter(n => !n.read).length;
 
   useEffect(() => {
-    if (!user || !token) return;
+    if (!user) return;
 
     // Load initial notifications
-    void api<CrmNotification[]>('/notifications', { token }).then(res => {
+    void api<CrmNotification[]>('/notifications').then(res => {
       if (res) setNotifications(res);
     });
 
     // Connect to WebSocket
     const socket: Socket = io(import.meta.env.VITE_API_URL || 'http://localhost:3001', {
-      auth: { token },
+      withCredentials: true,
     });
 
     socket.on('notification', (newNotif: CrmNotification) => {
@@ -41,11 +41,11 @@ export function NotificationBell() {
     return () => {
       socket.disconnect();
     };
-  }, [user, token]);
+  }, [user]);
 
   async function markAsRead(id: string) {
     try {
-      await api(`/notifications/${id}/read`, { method: 'PATCH', token });
+      await api(`/notifications/${id}/read`, { method: 'PATCH' });
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
     } catch (err) {
       console.error('Failed to mark notification as read:', err);

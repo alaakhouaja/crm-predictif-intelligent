@@ -8,7 +8,7 @@ import type { AuthUser, PaginatedResponse, UserRole } from '../types';
 const roles: UserRole[] = ['ADMIN', 'SALES', 'MARKETING', 'EXECUTIVE'];
 
 export function UsersPage() {
-  const { token } = useAuth();
+  const { user } = useAuth();
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
@@ -27,11 +27,13 @@ export function UsersPage() {
   const [role, setRole] = useState<UserRole>('SALES');
 
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!user) return;
     setError(null);
     setLoading(true);
     try {
-      const res = await api<PaginatedResponse<AuthUser>>(`/users?page=${page}&limit=10`, { token });
+      const res = await api<PaginatedResponse<AuthUser>>(
+        `/users?page=${page}&limit=10`,
+      );
       if (res) {
         setUsers(res.data);
         setLastPage(res.lastPage);
@@ -41,7 +43,7 @@ export function UsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, token]);
+  }, [page, user]);
 
   useEffect(() => {
     void load();
@@ -71,13 +73,12 @@ export function UsersPage() {
 
   async function onSubmitUser(e: FormEvent) {
     e.preventDefault();
-    if (!token) return;
+    if (!user) return;
     setError(null);
     try {
       if (mode === 'create') {
         await api<AuthUser>('/users', {
           method: 'POST',
-          token,
           body: JSON.stringify({
             email,
             password,
@@ -89,7 +90,6 @@ export function UsersPage() {
       } else if (mode === 'edit' && editingUserId) {
         await api<AuthUser>(`/users/${editingUserId}`, {
           method: 'PATCH',
-          token,
           body: JSON.stringify({
             email,
             password: password || undefined,
@@ -107,9 +107,9 @@ export function UsersPage() {
   }
 
   async function onDeleteUser(id: string) {
-    if (!token || !window.confirm('Supprimer cet utilisateur ?')) return;
+    if (!user || !window.confirm('Supprimer cet utilisateur ?')) return;
     try {
-      await api(`/users/${id}`, { method: 'DELETE', token });
+      await api(`/users/${id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Suppression impossible');

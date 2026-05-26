@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, TrendingUp, Users, Target, CheckCircle, XCircle, Clock, BarChart2, Phone, Mail, MessageSquare } from 'lucide-react';
 import { api } from '../api/client';
-import { useAuth } from '../auth/AuthContext';
 
 interface OverviewData {
   total: number;
@@ -73,7 +72,6 @@ function formatDate(dateStr: string) {
 }
 
 export function DashboardPage() {
-  const { token } = useAuth();
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [pipeline, setPipeline] = useState<PipelineStage[]>([]);
   const [sources, setSources] = useState<SourceData[]>([]);
@@ -84,15 +82,14 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchAll = async () => {
-    if (!token) return;
     setRefreshing(true);
     try {
       const [ov, pi, so, ow, ac] = await Promise.all([
-        api<OverviewData>('/dashboard/overview', { token }),
-        api<PipelineStage[]>('/dashboard/pipeline', { token }),
-        api<SourceData[]>('/dashboard/by-source', { token }),
-        api<OwnerData[]>('/dashboard/by-owner', { token }),
-        api<ActivityData[]>('/dashboard/activity?limit=15', { token }),
+        api<OverviewData>('/dashboard/overview'),
+        api<PipelineStage[]>('/dashboard/pipeline'),
+        api<SourceData[]>('/dashboard/by-source'),
+        api<OwnerData[]>('/dashboard/by-owner'),
+        api<ActivityData[]>('/dashboard/activity?limit=15'),
       ]);
       setOverview(ov);
       setPipeline(pi);
@@ -109,7 +106,7 @@ export function DashboardPage() {
     }
   };
 
-  useEffect(() => { fetchAll(); }, [token]);
+  useEffect(() => { fetchAll(); }, []);
 
   if (loading) {
     return (

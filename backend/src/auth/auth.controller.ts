@@ -6,9 +6,11 @@ import {
   HttpStatus,
   Patch,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { UserRole } from '../common/enums/user-role.enum';
 import {
   CurrentUser,
@@ -33,14 +35,39 @@ export class AuthController {
   @ApiOperation({
     summary: 'Create first admin (only when database has no users)',
   })
-  bootstrap(@Body() dto: BootstrapDto) {
-    return this.auth.bootstrapAdmin(dto.email, dto.password);
+  async bootstrap(
+    @Body() dto: BootstrapDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const tokens = await this.auth.bootstrapAdmin(dto.email, dto.password);
+    res.cookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    return tokens;
   }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto);
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    const tokens = await this.auth.login(dto);
+    res.cookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    return tokens;
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  logout(@Res({ passthrough: true }) res: Response) {
+    res.clearCookie('access_token', { path: '/' });
   }
 
   @Post('register')

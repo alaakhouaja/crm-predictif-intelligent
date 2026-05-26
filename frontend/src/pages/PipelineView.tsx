@@ -40,7 +40,7 @@ function emptyGroups(): Record<LeadStage, Lead[]> {
 }
 
 export function PipelineView() {
-  const { token, user } = useAuth();
+  const { user } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -57,12 +57,10 @@ export function PipelineView() {
 
   const loadLeads = useCallback(
     async (silent = false) => {
-      if (!token) return;
+      if (!user) return;
       if (!silent) setLoading(true);
       try {
-        const res = await api<PaginatedResponse<Lead>>('/leads?limit=100', {
-          token,
-        });
+        const res = await api<PaginatedResponse<Lead>>('/leads?limit=100');
         setLeads(res?.data ?? []);
         setLastRefreshAt(new Date().toLocaleTimeString());
         setError(null);
@@ -72,7 +70,7 @@ export function PipelineView() {
         if (!silent) setLoading(false);
       }
     },
-    [token],
+    [user],
   );
 
   useEffect(() => {
@@ -167,12 +165,11 @@ export function PipelineView() {
     });
 
     try {
-      if (!token) {
+      if (!user) {
         throw new Error('Session invalide, reconnectez-vous.');
       }
       await api(`/leads/${draggedLeadId}`, {
         method: 'PATCH',
-        token,
         body: JSON.stringify({ stage: destStage }),
       });
       await loadLeads(true);

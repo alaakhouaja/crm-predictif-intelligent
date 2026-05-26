@@ -203,6 +203,95 @@ body {
   margin: 0.5rem 0.25rem;
 }
 
+.notification-bell-container {
+  position: relative;
+}
+
+.bell-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  color: var(--text-main);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.bell-btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: var(--glow-primary);
+  transform: translateY(-1px);
+}
+
+.bell-badge {
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--danger);
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.notification-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  width: 360px;
+  max-height: 420px;
+  overflow: auto;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-lg);
+  z-index: 10002;
+}
+
+.dropdown-header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dropdown-header h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.notification-list {
+  padding: 0.5rem;
+}
+
+.notification-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.notification-item.unread {
+  border-color: rgba(124, 58, 237, 0.35);
+  box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.15) inset;
+}
+
+.notification-item.read {
+  opacity: 0.75;
+}
+
+.notification-item p {
+  margin: 0.25rem 0 0;
+}
+
 /* Glass Cards */
 .card {
   z-index: 20;

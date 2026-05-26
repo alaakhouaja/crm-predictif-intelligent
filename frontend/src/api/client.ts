@@ -28,7 +28,11 @@ export async function api<T>(
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const res = await fetch(`${API}${path}`, { ...init, headers });
+  const res = await fetch(`${API}${path}`, {
+    ...init,
+    headers,
+    credentials: 'include',
+  });
   const text = await res.text();
   if (!res.ok) {
     let message = text || res.statusText;

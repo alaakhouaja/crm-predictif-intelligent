@@ -14,6 +14,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
+import { NotificationBell } from './NotificationBell';
 
 interface LayoutProps {
   children: ReactNode;
@@ -184,7 +185,12 @@ export function AppLayout({ children }: LayoutProps) {
             </button>
           </div>
 
-          <div className="header-right" ref={menuRef}>
+          <div
+            className="header-right"
+            ref={menuRef}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}
+          >
+            <NotificationBell />
             <button
               type="button"
               className="user-menu-trigger"

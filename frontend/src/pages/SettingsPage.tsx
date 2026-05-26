@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 
 export function SettingsPage() {
-  const { token, user, refreshMe, logout } = useAuth();
+  const { user, refreshMe, logout } = useAuth();
   const [firstName, setFirstName] = useState(user?.firstName ?? '');
   const [lastName, setLastName] = useState(user?.lastName ?? '');
   const [savingProfile, setSavingProfile] = useState(false);
@@ -23,13 +23,11 @@ export function SettingsPage() {
 
   async function onSaveProfile(e: FormEvent) {
     e.preventDefault();
-    if (!token) return;
     setProfileMessage(null);
     setSavingProfile(true);
     try {
       await api('/auth/me', {
         method: 'PATCH',
-        token,
         body: JSON.stringify({
           firstName: firstName.trim() || null,
           lastName: lastName.trim() || null,
@@ -46,7 +44,6 @@ export function SettingsPage() {
 
   async function onChangePassword(e: FormEvent) {
     e.preventDefault();
-    if (!token) return;
     setPasswordMessage(null);
     if (!oldPassword || !newPassword) {
       setPasswordMessage('Veuillez remplir tous les champs.');
@@ -60,7 +57,6 @@ export function SettingsPage() {
     try {
       await api('/auth/change-password', {
         method: 'POST',
-        token,
         body: JSON.stringify({ oldPassword, newPassword }),
       });
       setOldPassword('');
@@ -109,7 +105,7 @@ export function SettingsPage() {
               <div className="muted small">
                 Connecté en tant que <span className="badge" style={{ marginLeft: '0.5rem' }}>{user?.role ?? '—'}</span>
               </div>
-              <button className="primary" type="submit" disabled={savingProfile || !token}>
+              <button className="primary" type="submit" disabled={savingProfile || !user}>
                 {savingProfile ? 'Enregistrement…' : 'Enregistrer'}
               </button>
             </div>
@@ -144,7 +140,7 @@ export function SettingsPage() {
               </label>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button className="primary" type="submit" disabled={savingPassword || !token}>
+                <button className="primary" type="submit" disabled={savingPassword || !user}>
                   {savingPassword ? 'Mise à jour…' : 'Changer'}
                 </button>
               </div>
@@ -162,7 +158,7 @@ export function SettingsPage() {
             <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1.25rem' }}>
               <div className="muted small">Compte : {displayName}</div>
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <button className="secondary" type="button" onClick={() => window.location.reload()} disabled={!token}>
+                <button className="secondary" type="button" onClick={() => window.location.reload()} disabled={!user}>
                   Actualiser le profil
                 </button>
                 <button className="secondary" type="button" onClick={logout}>

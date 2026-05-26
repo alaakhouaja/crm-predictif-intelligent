@@ -10,44 +10,54 @@ import {
 import { api } from '../api/client';
 import type { AuthUser } from '../types';
 
-const TOKEN_KEY = 'crm_token';
-
 type AuthState = {
-  token: string | null;
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem(TOKEN_KEY),
-  );
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const refreshMe = useCallback(async () => {
+    try {
+      const me = await api<AuthUser>('/auth/me');
+      setUser(me);
+    } catch {
+      setUser(null);
+    }
+  }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
+    await api('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    await refreshMe();
+  }, [refreshMe]);
+
+  const logout = useCallback(async () => {
+    try {
+      await api('/auth/logout', { method: 'POST' });
+    } finally {
+      setUser(null);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      if (!token) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
       try {
-        const me = await api<AuthUser>('/auth/me', { token });
+        const me = await api<AuthUser>('/auth/me');
         if (!cancelled) setUser(me);
       } catch {
-        if (!cancelled) {
-          localStorage.removeItem(TOKEN_KEY);
-          setToken(null);
-          setUser(null);
-        }
+        if (!cancelled) setUser(null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -55,51 +65,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token]);
-
-  const login = useCallback(async (email: string, password: string) => {
-    const res = await api<{ accessToken: string }>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    localStorage.setItem(TOKEN_KEY, res.accessToken);
-    setToken(res.accessToken);
-    const me = await api<AuthUser>('/auth/me', { token: res.accessToken });
-    setUser(me);
-  }, []);
-
-  const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
-    setToken(null);
-    setUser(null);
-  }, []);
-
-  const refreshMe = useCallback(async () => {
-    const t = localStorage.getItem(TOKEN_KEY);
-    if (!t) {
-      setUser(null);
-      return;
-    }
-    try {
-      const me = await api<AuthUser>('/auth/me', { token: t });
-      setUser(me);
-    } catch {
-      localStorage.removeItem(TOKEN_KEY);
-      setToken(null);
-      setUser(null);
-    }
   }, []);
 
   const value = useMemo(
     () => ({
-      token,
       user,
       loading,
       login,
       logout,
       refreshMe,
     }),
-    [token, user, loading, login, logout, refreshMe],
+    [user, loading, login, logout, refreshMe],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

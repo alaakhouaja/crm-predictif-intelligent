@@ -10,7 +10,11 @@ import { JwtService } from '@nestjs/jwt';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: [
+      process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173',
+      'http://localhost:5174',
+    ],
+    credentials: true,
   },
 })
 @Injectable()
@@ -23,9 +27,17 @@ export class NotificationsGateway
   server: Server;
 
   handleConnection(client: Socket) {
+    const cookieHeader = client.handshake.headers.cookie as string | undefined;
+    const tokenFromCookie = cookieHeader
+      ?.split(';')
+      .map((p) => p.trim())
+      .find((p) => p.startsWith('access_token='))
+      ?.slice('access_token='.length);
+
     const rawToken =
       (client.handshake.auth?.token as string | undefined) ??
-      (client.handshake.headers.authorization as string | undefined);
+      (client.handshake.headers.authorization as string | undefined) ??
+      tokenFromCookie;
     const token = rawToken?.startsWith('Bearer ')
       ? rawToken.slice(7)
       : rawToken;

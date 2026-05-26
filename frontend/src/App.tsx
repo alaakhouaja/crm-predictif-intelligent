@@ -25,7 +25,7 @@ function Protected({ children, roles }: { children: ReactNode, roles?: string[] 
   
   if (!auth) return <div className="page center"><p className="muted">Initialisation...</p></div>;
   
-  const { token, user, loading } = auth;
+  const { user, loading } = auth;
   
   if (loading) {
     return (
@@ -34,7 +34,7 @@ function Protected({ children, roles }: { children: ReactNode, roles?: string[] 
       </div>
     );
   }
-  if (!token) {
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
   if (roles && user && !roles.includes(user.role)) {
@@ -51,7 +51,7 @@ function LoginRoute() {
   const auth = useAuth();
   if (!auth) return null;
   
-  const { token, loading } = auth;
+  const { user, loading } = auth;
   if (loading) {
     return (
       <div className="page center">
@@ -59,7 +59,7 @@ function LoginRoute() {
       </div>
     );
   }
-  if (token) {
+  if (user) {
     return <Navigate to={defaultPath(auth.user?.role)} replace />;
   }
   return <LoginPage />;
@@ -75,7 +75,7 @@ function HomeRoute() {
       </div>
     );
   }
-  if (!auth.token) return <Navigate to="/login" replace />;
+  if (!auth.user) return <Navigate to="/login" replace />;
   return <Navigate to={defaultPath(auth.user?.role)} replace />;
 }
 

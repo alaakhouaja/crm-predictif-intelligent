@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -7,17 +8,13 @@ import { unlink } from 'fs/promises';
 import { Prisma, TaskPriority, TaskStatus, TaskType } from '@prisma/client';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
-import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
 @Injectable()
 export class TasksService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly notifications: NotificationsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private readonly taskInclude = {
     lead: {
@@ -118,45 +115,6 @@ export class TasksService {
     }
   }
 
-  private async ensureOverdueNotifications(userId: string) {
-    const now = new Date();
-    const overdue = await this.prisma.task.findMany({
-      where: {
-        assignedToId: userId,
-        status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
-        dueDate: { lt: now },
-        overdueNotifiedAt: null,
-      },
-      select: {
-        id: true,
-        title: true,
-        dueDate: true,
-      },
-      orderBy: { dueDate: 'asc' },
-      take: 20,
-    });
-
-    for (const t of overdue) {
-      await this.prisma.$transaction(async (tx) => {
-        const current = await tx.task.findUnique({
-          where: { id: t.id },
-          select: { overdueNotifiedAt: true },
-        });
-        if (!current || current.overdueNotifiedAt) return;
-
-        await tx.task.update({
-          where: { id: t.id },
-          data: { overdueNotifiedAt: now },
-        });
-        await this.notifications.create(
-          userId,
-          'Tâche en retard',
-          `La tâche "${t.title}" est en retard (échéance: ${t.dueDate?.toLocaleString() ?? '—'}).`,
-        );
-      });
-    }
-  }
-
   private canReadTask(user: AuthUser, task: { type: TaskType; assignedToId: string | null; createdById: string; lead?: { ownerId: string } | null }) {
     if (this.canReadAll(user)) return true;
 
@@ -201,8 +159,6 @@ export class TasksService {
       },
       include: this.taskInclude,
     });
-
-    await this.ensureOverdueNotifications(assignedToId);
     return task;
   }
 
@@ -221,8 +177,6 @@ export class TasksService {
       limit?: number;
     },
   ) {
-    await this.ensureOverdueNotifications(user.id);
-
     const {
       leadId,
       assignedToId,
@@ -282,8 +236,6 @@ export class TasksService {
   }
 
   async findOne(user: AuthUser, id: string) {
-    await this.ensureOverdueNotifications(user.id);
-
     const task = await this.prisma.task.findUnique({
       where: { id },
       include: {
@@ -371,7 +323,6 @@ export class TasksService {
     });
 
     const notifyFor = task.assignedToId ?? user.id;
-    await this.ensureOverdueNotifications(notifyFor);
     return task;
   }
 
@@ -428,8 +379,12 @@ export class TasksService {
   async addAttachment(
     user: AuthUser,
     taskId: string,
-    file: { path: string; originalname: string; mimetype: string; size: number },
+    file?: { path?: string; originalname?: string; mimetype?: string; size?: number },
   ) {
+    if (!file?.path || !file.originalname) {
+      throw new BadRequestException('Aucun fichier reçu');
+    }
+
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
       select: {
@@ -454,8 +409,8 @@ export class TasksService {
         taskId,
         uploadedById: user.id,
         originalName: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
+        mimeType: file.mimetype ?? 'application/octet-stream',
+        size: file.size ?? 0,
         storagePath: file.path,
       },
       select: this.attachmentSelect,
@@ -581,8 +536,6 @@ export class TasksService {
       overdue?: string;
     },
   ) {
-    await this.ensureOverdueNotifications(user.id);
-
     const where = this.buildWhere(user, query);
     const now = new Date();
 

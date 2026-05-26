@@ -39,8 +39,8 @@ const stages: LeadStage[] = [
 const interactionTypes: InteractionType[] = ['EMAIL', 'CALL', 'MEETING', 'NOTE'];
 
 export function LeadsPage() {
-  const { token, user } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [totalLeads, setTotalLeads] = useState(0);
   const [page, setPage] = useState(1);
@@ -86,7 +86,7 @@ export function LeadsPage() {
   const [editStage, setEditStage] = useState<LeadStage>('NEW');
 
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!user) return;
     setError(null);
     setLoading(true);
     try {
@@ -95,7 +95,7 @@ export function LeadsPage() {
       if (search) url += `&search=${encodeURIComponent(search)}`;
       url += `&archived=${showArchived ? 'true' : 'false'}`;
       
-      const res = await api<PaginatedResponse<Lead>>(url, { token });
+      const res = await api<PaginatedResponse<Lead>>(url);
       if (res) {
         setLeads(res.data);
         setTotalLeads(res.total);
@@ -106,10 +106,10 @@ export function LeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page, search, showArchived, token]);
+  }, [filter, page, search, showArchived, user]);
 
   async function onExportAiDataset() {
-    if (!token) return;
+    if (!user) return;
     try {
       const data = await api<{
         firstName: string;
@@ -126,7 +126,7 @@ export function LeadsPage() {
         createdAt: string;
         updatedAt: string;
         label: number;
-      }[]>('/leads/export-ai', { token });
+      }[]>('/leads/export-ai');
       const headers = [
         'firstName',
         'lastName',
@@ -239,7 +239,7 @@ export function LeadsPage() {
 
   async function onImportCSV(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !token) return;
+    if (!file || !user) return;
 
     const formData = new FormData();
     formData.append('file', file);
@@ -248,7 +248,6 @@ export function LeadsPage() {
     try {
       const res = await api<{ message: string }>('/leads/import', {
         method: 'POST',
-        token,
         body: formData,
         // Ne pas mettre de Content-Type ici pour que fetch le gère automatiquement avec le boundary
         headers: {} 
@@ -266,10 +265,12 @@ export function LeadsPage() {
   }
 
   const loadInteractions = useCallback(async (leadId: string) => {
-    if (!token) return;
+    if (!user) return;
     setLoadingInteractions(true);
     try {
-      const res = await api<PaginatedResponse<Interaction>>(`/interactions?leadId=${leadId}&limit=50`, { token });
+      const res = await api<PaginatedResponse<Interaction>>(
+        `/interactions?leadId=${leadId}&limit=50`,
+      );
       if (res && res.data) {
         setInteractions(res.data);
       } else {
@@ -281,13 +282,15 @@ export function LeadsPage() {
     } finally {
       setLoadingInteractions(false);
     }
-  }, [token]);
+  }, [user]);
 
   const loadTasks = useCallback(async (leadId: string) => {
-    if (!token) return;
+    if (!user) return;
     setLoadingTasks(true);
     try {
-      const res = await api<PaginatedResponse<Task>>(`/tasks?leadId=${leadId}&limit=20`, { token });
+      const res = await api<PaginatedResponse<Task>>(
+        `/tasks?leadId=${leadId}&limit=20`,
+      );
       if (res && res.data) {
         setTasks(res.data);
       } else {
@@ -299,7 +302,7 @@ export function LeadsPage() {
     } finally {
       setLoadingTasks(false);
     }
-  }, [token]);
+  }, [user]);
 
   useEffect(() => {
     void load();
@@ -352,7 +355,7 @@ export function LeadsPage() {
 
   async function onUpdateLead(e: FormEvent) {
     e.preventDefault();
-    if (!token || !selectedLead) return;
+    if (!user || !selectedLead) return;
     try {
       const payload: Record<string, unknown> = {
         firstName: editFirstName,
@@ -367,7 +370,6 @@ export function LeadsPage() {
 
       const updated = await api<Lead>(`/leads/${selectedLead.id}`, {
         method: 'PATCH',
-        token,
         body: JSON.stringify(payload),
       });
       setSelectedLead(updated);
@@ -379,11 +381,10 @@ export function LeadsPage() {
   }
 
   async function onArchiveLead() {
-    if (!token || !selectedLead || !window.confirm('Archiver ce lead ?')) return;
+    if (!user || !selectedLead || !window.confirm('Archiver ce lead ?')) return;
     try {
       const updated = await api<Lead>(`/leads/${selectedLead.id}/archive`, {
         method: 'POST',
-        token,
       });
       setSelectedLead(updated);
       await load();
@@ -393,11 +394,10 @@ export function LeadsPage() {
   }
 
   async function onUnarchiveLead() {
-    if (!token || !selectedLead || !window.confirm('Désarchiver ce lead ?')) return;
+    if (!user || !selectedLead || !window.confirm('Désarchiver ce lead ?')) return;
     try {
       const updated = await api<Lead>(`/leads/${selectedLead.id}/unarchive`, {
         method: 'POST',
-        token,
       });
       setSelectedLead(updated);
       await load();
@@ -407,11 +407,10 @@ export function LeadsPage() {
   }
 
   async function onDeleteLead() {
-    if (!token || !selectedLead || !window.confirm('Supprimer ce lead définitivement ?')) return;
+    if (!user || !selectedLead || !window.confirm('Supprimer ce lead définitivement ?')) return;
     try {
       await api<Lead>(`/leads/${selectedLead.id}`, {
         method: 'DELETE',
-        token,
       });
       setSelectedLead(null);
       await load();
@@ -422,12 +421,11 @@ export function LeadsPage() {
 
   async function onCreateLead(e: FormEvent) {
     e.preventDefault();
-    if (!token) return;
+    if (!user) return;
     setError(null);
     try {
       await api<Lead>('/leads', {
         method: 'POST',
-        token,
         body: JSON.stringify({
           firstName: createFirstName,
           lastName: createLastName,
@@ -454,11 +452,10 @@ export function LeadsPage() {
 
   async function onCreateInteraction(e: FormEvent) {
     e.preventDefault();
-    if (!token || !selectedLead || !newInteractionContent) return;
+    if (!user || !selectedLead || !newInteractionContent) return;
     try {
       await api<Interaction>('/interactions', {
         method: 'POST',
-        token,
         body: JSON.stringify({
           leadId: selectedLead.id,
           type: newInteractionType,
@@ -474,11 +471,10 @@ export function LeadsPage() {
 
   async function onCreateTask(e: FormEvent) {
     e.preventDefault();
-    if (!token || !selectedLead || !newTaskTitle || !canAddTask) return;
+    if (!user || !selectedLead || !newTaskTitle || !canAddTask) return;
     try {
       await api<Task>('/tasks', {
         method: 'POST',
-        token,
         body: JSON.stringify({
           title: newTaskTitle,
           leadId: selectedLead.id,
@@ -495,11 +491,10 @@ export function LeadsPage() {
   }
 
   async function markTaskDone(id: string) {
-    if (!token || !selectedLead) return;
+    if (!user || !selectedLead) return;
     try {
       await api<Task>(`/tasks/${id}`, {
         method: 'PATCH',
-        token,
         body: JSON.stringify({ status: 'DONE' }),
       });
       await loadTasks(selectedLead.id);

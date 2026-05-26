@@ -1,12 +1,15 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Patch,
   Post,
   Query,
+  Req,
   Res,
   UseGuards,
   UseInterceptors,
@@ -25,8 +28,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
-import path from 'path';
-import type { Response } from 'express';
+import * as path from 'path';
+import type { Request, Response } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -45,19 +48,6 @@ import { TasksService } from './tasks.service';
 @Controller('tasks')
 export class TasksController {
   constructor(private readonly tasks: TasksService) {}
-
-  private readonly uploadStorage = diskStorage({
-    destination: (req, _file, cb) => {
-      const taskId = (req.params as { id?: string }).id ?? 'unknown';
-      const dest = path.join(process.cwd(), 'uploads', 'tasks', taskId);
-      mkdirSync(dest, { recursive: true });
-      cb(null, dest);
-    },
-    filename: (_req, file, cb) => {
-      const safeOriginal = file.originalname.replace(/[^\w.\- ]+/g, '_');
-      cb(null, `${randomUUID()}_${safeOriginal}`);
-    },
-  });
 
   @Post()
   @UseGuards(RolesGuard)
@@ -141,12 +131,17 @@ export class TasksController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const att = await this.tasks.getAttachmentForDownload(user, attachmentId);
+    const uploadsRoot = path.resolve(process.cwd(), 'uploads');
+    const resolved = path.resolve(att.storagePath);
+    if (!resolved.startsWith(uploadsRoot + path.sep)) {
+      throw new ForbiddenException();
+    }
     res.setHeader('Content-Type', att.mimeType || 'application/octet-stream');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${encodeURIComponent(att.originalName)}"`,
     );
-    return res.sendFile(att.storagePath);
+    return res.sendFile(resolved);
   }
 
   @Delete('attachments/:attachmentId')
@@ -198,6 +193,29 @@ export class TasksController {
           cb(null, `${randomUUID()}_${safeOriginal}`);
         },
       }),
+      fileFilter: (req, file, cb) => {
+        const allowed = new Set([
+          'application/pdf',
+          'image/png',
+          'image/jpeg',
+          'image/gif',
+          'image/webp',
+          'text/plain',
+          'text/csv',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/zip',
+        ]);
+        if (!allowed.has(file.mimetype)) {
+          (req as unknown as { fileValidationError?: string }).fileValidationError =
+            'Unsupported file type';
+          cb(null, false);
+          return;
+        }
+        cb(null, true);
+      },
       limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
@@ -205,8 +223,14 @@ export class TasksController {
   addAttachment(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
+    @Req() req: Request,
     @UploadedFile() file: Express.Multer.File,
   ) {
+    const err =
+      (req as unknown as { fileValidationError?: string }).fileValidationError ??
+      null;
+    if (err) throw new BadRequestException(err);
+    if (!file) throw new BadRequestException('Aucun fichier reçu');
     return this.tasks.addAttachment(user, id, file);
   }
 
