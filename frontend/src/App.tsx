@@ -10,6 +10,9 @@ import { SettingsPage } from './pages/SettingsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { TasksPage } from './pages/TasksPage';
 import { AppLayout } from './components/AppLayout';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { ToastProvider } from './components/ToastProvider';
+import { NotFoundPage } from './pages/NotFoundPage';
 import './App.css';
 
 function defaultPath(role?: string) {
@@ -81,74 +84,78 @@ function HomeRoute() {
 
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginRoute />} />
-      <Route
-        path="/dashboard"
-        element={
-          <Protected>
-            <DashboardPage />
-          </Protected>
-        }
-      />
-      <Route
-        path="/leads"
-        element={
-          <Protected>
-            <LeadsPage />
-          </Protected>
-        }
-      />
-      <Route
-        path="/pipeline"
-        element={
-          <Protected roles={['ADMIN', 'SALES', 'EXECUTIVE']}>
-            <PipelineView />
-          </Protected>
-        }
-      />
-      <Route
-        path="/users"
-        element={
-          <Protected roles={['ADMIN']}>
-            <UsersPage />
-          </Protected>
-        }
-      />
-      <Route
-        path="/profile"
-        element={
-          <Protected>
-            <ProfilePage />
-          </Protected>
-        }
-      />
-      <Route
-        path="/settings"
-        element={
-          <Protected>
-            <SettingsPage />
-          </Protected>
-        }
-      />
-      <Route
-        path="/tasks"
-        element={
-          <Protected>
-            <TasksPage />
-          </Protected>
-        }
-      />
-      <Route path="/" element={<HomeRoute />} />
-      <Route path="*" element={<HomeRoute />} />
-    </Routes>
+    <ErrorBoundary>
+      <Routes>
+        <Route path="/login" element={<LoginRoute />} />
+        <Route
+          path="/dashboard"
+          element={
+            <Protected>
+              <DashboardPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/leads"
+          element={
+            <Protected>
+              <LeadsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/pipeline"
+          element={
+            <Protected roles={['ADMIN', 'SALES', 'EXECUTIVE']}>
+              <PipelineView />
+            </Protected>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <Protected roles={['ADMIN']}>
+              <UsersPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <Protected>
+              <ProfilePage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <Protected>
+              <SettingsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/tasks"
+          element={
+            <Protected>
+              <TasksPage />
+            </Protected>
+          }
+        />
+        <Route path="/" element={<HomeRoute />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </ErrorBoundary>
   );
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppRoutes />
-    </AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </ToastProvider>
   );
 }

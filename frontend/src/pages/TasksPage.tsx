@@ -4,6 +4,8 @@ import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-p
 import { Plus, X, CheckCircle2, AlertTriangle, Clock, Pencil, Ban, Kanban, List, Paperclip, Activity } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { useToast } from '../components/ToastProvider';
+import { formatDateTime } from '../utils/datetime';
 import type { AuditLogEntry, AuthUser, PaginatedResponse, Task, TaskAttachment, TaskPriority, TaskStatus, TaskType } from '../types';
 
 const statuses: TaskStatus[] = ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELED'];
@@ -16,6 +18,7 @@ type ViewMode = 'table' | 'kanban';
 
 export function TasksPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
   const [tasks, setTasks] = useState<Task[]>([]);
   const [page, setPage] = useState(1);
@@ -65,6 +68,7 @@ export function TasksPage() {
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [activityLogs, setActivityLogs] = useState<AuditLogEntry[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
 
   const [stats, setStats] = useState<{ total: number; completed: number; overdue: number; highPriority: number } | null>(null);
 
@@ -281,7 +285,7 @@ export function TasksPage() {
       await load();
       await loadStats();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Mise à jour impossible');
+      toast.error(err instanceof Error ? err.message : 'Mise à jour impossible', 'Tâche');
     }
   }
 
@@ -295,7 +299,7 @@ export function TasksPage() {
       await load();
       await loadStats();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Mise à jour impossible');
+      toast.error(err instanceof Error ? err.message : 'Mise à jour impossible', 'Tâche');
     }
   }
 
@@ -325,6 +329,7 @@ export function TasksPage() {
   async function uploadAttachment(file: File) {
     if (!user || !editing) return;
     setUploading(true);
+    setAttachmentError(null);
     try {
       const form = new FormData();
       form.append('file', file);
@@ -336,7 +341,9 @@ export function TasksPage() {
       await loadAttachments(editing.id);
       await loadTaskDetails(editing.id);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Upload impossible');
+      const msg = err instanceof Error ? err.message : 'Upload impossible';
+      setAttachmentError(msg);
+      toast.error(msg, 'Upload');
     } finally {
       setUploading(false);
     }
@@ -347,7 +354,7 @@ export function TasksPage() {
       credentials: 'include',
     });
     if (!res.ok) {
-      alert('Téléchargement impossible');
+      toast.error('Téléchargement impossible', 'Pièce jointe');
       return;
     }
     const blob = await res.blob();
@@ -369,7 +376,7 @@ export function TasksPage() {
       await loadAttachments(editing.id);
       await loadTaskDetails(editing.id);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Suppression impossible');
+      toast.error(err instanceof Error ? err.message : 'Suppression impossible', 'Pièce jointe');
     }
   }
 
@@ -420,7 +427,7 @@ export function TasksPage() {
       await load();
       await loadStats();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Déplacement impossible');
+      toast.error(err instanceof Error ? err.message : 'Déplacement impossible', 'Kanban');
       await load();
     }
   }
@@ -659,7 +666,7 @@ export function TasksPage() {
                           </div>
                         </td>
                         <td className="small text-muted">
-                          {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
+                          {t.dueDate ? formatDateTime(t.dueDate) : '—'}
                         </td>
                         <td>
                           <span className={`badge ${statusBadge(t.status)}`}>{t.status}</span>
@@ -1055,6 +1062,7 @@ export function TasksPage() {
                       </label>
                     </div>
                   )}
+                  {attachmentError && <div className="inline-error">{attachmentError}</div>}
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     {attachments.map((a) => (
@@ -1065,7 +1073,7 @@ export function TasksPage() {
                               {a.originalName}
                             </div>
                             <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
-                              {formatBytes(a.size)} • {new Date(a.createdAt).toLocaleString()}
+                              {formatBytes(a.size)} • {formatDateTime(a.createdAt)}
                             </div>
                           </div>
                           <div className="row-gap">
@@ -1102,7 +1110,7 @@ export function TasksPage() {
                       <div key={a.id} style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '0.75rem', background: 'rgba(15, 23, 42, 0.5)' }}>
                         <div style={{ fontWeight: 800, fontSize: '0.9rem' }}>{activityLabel(a)}</div>
                         <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
-                          {a.user ? `${a.user.firstName ?? ''} ${a.user.lastName ?? ''}`.trim() || a.user.email : '—'} • {new Date(a.createdAt).toLocaleString()}
+                          {a.user ? `${a.user.firstName ?? ''} ${a.user.lastName ?? ''}`.trim() || a.user.email : '—'} • {formatDateTime(a.createdAt)}
                         </div>
                       </div>
                     ))}

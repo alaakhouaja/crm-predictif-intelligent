@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
+import { requestIdMiddleware } from './common/middleware/request-id.middleware';
 import { PrismaService } from './prisma/prisma.service';
 
 async function bootstrap() {
@@ -11,6 +12,7 @@ async function bootstrap() {
 
   const prisma = app.get(PrismaService);
   app.useGlobalInterceptors(new AuditInterceptor(prisma));
+  app.use(requestIdMiddleware);
   app.enableCors({
     origin: [
       process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173',

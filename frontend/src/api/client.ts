@@ -2,11 +2,13 @@ const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly requestId?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, requestId?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
@@ -36,14 +38,19 @@ export async function api<T>(
   const text = await res.text();
   if (!res.ok) {
     let message = text || res.statusText;
+    let requestId: string | undefined = undefined;
     try {
-      const j = JSON.parse(text) as { message?: string | string[] };
+      const j = JSON.parse(text) as { message?: string | string[]; requestId?: string };
       if (typeof j.message === 'string') message = j.message;
       else if (Array.isArray(j.message)) message = j.message.join(', ');
+      if (typeof j.requestId === 'string') requestId = j.requestId;
     } catch {
       /* keep text */
     }
-    throw new ApiError(message, res.status);
+    if (requestId && res.status >= 500) {
+      message = `${message} (Référence: ${requestId})`;
+    }
+    throw new ApiError(message, res.status, requestId);
   }
   if (res.status === 204 || !text) {
     return undefined as T;

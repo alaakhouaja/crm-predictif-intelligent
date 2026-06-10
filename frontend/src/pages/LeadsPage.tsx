@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { useToast } from '../components/ToastProvider';
+import { formatDateTime } from '../utils/datetime';
 import type { Lead, LeadStage, PaginatedResponse, Interaction, InteractionType, Task } from '../types';
 
 const stages: LeadStage[] = [
@@ -40,6 +42,7 @@ const interactionTypes: InteractionType[] = ['EMAIL', 'CALL', 'MEETING', 'NOTE']
 
 export function LeadsPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const [searchParams] = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [totalLeads, setTotalLeads] = useState(0);
@@ -166,7 +169,7 @@ export function LeadsPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch {
-      alert("Erreur lors de l'export du dataset IA");
+      toast.error("Erreur lors de l'export du dataset IA", 'Export');
     }
   }
 
@@ -233,7 +236,7 @@ export function LeadsPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch {
-      alert('Erreur lors de l\'exportation');
+      toast.error("Erreur lors de l'exportation", 'Export');
     }
   }
 
@@ -253,11 +256,11 @@ export function LeadsPage() {
         headers: {} 
       });
       if (res) {
-        alert(res.message);
+        toast.success(res.message, 'Import');
         await load();
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur lors de l\'importation');
+      toast.error(err instanceof Error ? err.message : "Erreur lors de l'importation", 'Import');
     } finally {
       setLoading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -376,7 +379,7 @@ export function LeadsPage() {
       setIsEditModalOpen(false);
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Modification impossible');
+      toast.error(err instanceof Error ? err.message : 'Modification impossible', 'Lead');
     }
   }
 
@@ -389,7 +392,7 @@ export function LeadsPage() {
       setSelectedLead(updated);
       await load();
     } catch {
-      alert('Erreur lors de l\'archivage');
+      toast.error("Erreur lors de l'archivage", 'Lead');
     }
   }
 
@@ -402,7 +405,7 @@ export function LeadsPage() {
       setSelectedLead(updated);
       await load();
     } catch {
-      alert('Erreur lors du désarchivage');
+      toast.error('Erreur lors du désarchivage', 'Lead');
     }
   }
 
@@ -415,7 +418,7 @@ export function LeadsPage() {
       setSelectedLead(null);
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur lors de la suppression');
+      toast.error(err instanceof Error ? err.message : 'Erreur lors de la suppression', 'Lead');
     }
   }
 
@@ -465,7 +468,7 @@ export function LeadsPage() {
       setNewInteractionContent('');
       await loadInteractions(selectedLead.id);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur création interaction');
+      toast.error(err instanceof Error ? err.message : 'Erreur création interaction', 'Interaction');
     }
   }
 
@@ -486,7 +489,7 @@ export function LeadsPage() {
       setNewTaskDueDate('');
       await loadTasks(selectedLead.id);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur création tâche');
+      toast.error(err instanceof Error ? err.message : 'Erreur création tâche', 'Tâche');
     }
   }
 
@@ -499,7 +502,7 @@ export function LeadsPage() {
       });
       await loadTasks(selectedLead.id);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Mise à jour impossible');
+      toast.error(err instanceof Error ? err.message : 'Mise à jour impossible', 'Tâche');
     }
   }
 
@@ -961,7 +964,7 @@ export function LeadsPage() {
                                     {t.status}
                                   </span>
                                   <span className="text-muted x-small">
-                                    {t.dueDate ? new Date(t.dueDate).toLocaleString() : '—'}
+                                    {t.dueDate ? formatDateTime(t.dueDate) : '—'}
                                   </span>
                                 </div>
                               </div>
@@ -1051,7 +1054,7 @@ export function LeadsPage() {
                                 i.type === 'CALL' ? 'badge-orange' : 
                                 i.type === 'EMAIL' ? 'badge-blue' : 'badge-green'
                               }`} style={{ fontSize: '0.6rem' }}>{i.type}</span>
-                              <span className="text-muted x-small">{new Date(i.createdAt).toLocaleString()}</span>
+                              <span className="text-muted x-small">{formatDateTime(i.createdAt)}</span>
                             </div>
                             <p style={{ margin: 0, fontSize: '0.85rem', lineHeight: '1.6', color: 'var(--text-main)' }}>{i.content}</p>
                           </motion.div>

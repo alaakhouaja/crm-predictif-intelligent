@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { useAuth } from '../auth/AuthContext';
 import { api } from '../api/client';
+import { formatDateTime } from '../utils/datetime';
 
 type CrmNotification = {
   id: string;
@@ -69,7 +70,7 @@ export function NotificationBell() {
               <div key={n.id} className={`notification-item ${n.read ? 'read' : 'unread'}`} onClick={() => void markAsRead(n.id)}>
                 <strong>{n.title}</strong>
                 <p className="small">{n.content}</p>
-                <span className="x-small muted">{new Date(n.createdAt).toLocaleString()}</span>
+                <span className="x-small muted">{formatDateTime(n.createdAt)}</span>
               </div>
             ))}
           </div>

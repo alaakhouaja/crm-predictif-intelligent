@@ -3,12 +3,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { useToast } from '../components/ToastProvider';
 import type { AuthUser, PaginatedResponse, UserRole } from '../types';
 
 const roles: UserRole[] = ['ADMIN', 'SALES', 'MARKETING', 'EXECUTIVE'];
 
 export function UsersPage() {
   const { user } = useAuth();
+  const toast = useToast();
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
@@ -112,7 +114,7 @@ export function UsersPage() {
       await api(`/users/${id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Suppression impossible');
+      toast.error(err instanceof Error ? err.message : 'Suppression impossible', 'Utilisateur');
     }
   }
 
