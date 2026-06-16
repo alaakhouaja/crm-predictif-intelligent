@@ -12,12 +12,12 @@ export class DashboardService {
 
     const [total, newLeads, contacted, qualified, proposal, won, lost] = await Promise.all([
       this.prisma.lead.count({ where }),
-      this.prisma.lead.count({ where: { ...where, stage: LeadStage.NEW } }),
-      this.prisma.lead.count({ where: { ...where, stage: LeadStage.CONTACTED } }),
-      this.prisma.lead.count({ where: { ...where, stage: LeadStage.QUALIFIED } }),
-      this.prisma.lead.count({ where: { ...where, stage: LeadStage.PROPOSAL } }),
-      this.prisma.lead.count({ where: { ...where, stage: LeadStage.WON } }),
-      this.prisma.lead.count({ where: { ...where, stage: LeadStage.LOST } }),
+      this.prisma.lead.count({ where: { ...where, stage: LeadStage.Nouveau } }),
+      this.prisma.lead.count({ where: { ...where, stage: LeadStage.Contacte } }),
+      this.prisma.lead.count({ where: { ...where, stage: LeadStage.Qualifie } }),
+      this.prisma.lead.count({ where: { ...where, stage: LeadStage.Proposition } }),
+      this.prisma.lead.count({ where: { ...where, stage: LeadStage.Gagne } }),
+      this.prisma.lead.count({ where: { ...where, stage: LeadStage.Perdu } }),
     ]);
 
     const closed = won + lost;
@@ -45,14 +45,21 @@ export class DashboardService {
   async getPipelineMetrics(userId: string, userRole: UserRole) {
     const where = userRole === UserRole.SALES ? { ownerId: userId, isAnonymized: false } : { isAnonymized: false };
 
-    const stages: LeadStage[] = [LeadStage.NEW, LeadStage.CONTACTED, LeadStage.QUALIFIED, LeadStage.PROPOSAL, LeadStage.WON, LeadStage.LOST];
+    const stages: LeadStage[] = [
+      LeadStage.Nouveau,
+      LeadStage.Contacte,
+      LeadStage.Qualifie,
+      LeadStage.Proposition,
+      LeadStage.Gagne,
+      LeadStage.Perdu,
+    ];
     const stageLabels: Record<LeadStage, string> = {
-      [LeadStage.NEW]: 'Nouveau',
-      [LeadStage.CONTACTED]: 'Contacté',
-      [LeadStage.QUALIFIED]: 'Qualifié',
-      [LeadStage.PROPOSAL]: 'Proposition',
-      [LeadStage.WON]: 'Gagné',
-      [LeadStage.LOST]: 'Perdu',
+      [LeadStage.Nouveau]: 'Nouveau',
+      [LeadStage.Contacte]: 'Contacte',
+      [LeadStage.Qualifie]: 'Qualifie',
+      [LeadStage.Proposition]: 'Proposition',
+      [LeadStage.Gagne]: 'Gagne',
+      [LeadStage.Perdu]: 'Perdu',
     };
 
     const counts = await Promise.all(
@@ -92,36 +99,47 @@ export class DashboardService {
     const canSeeAll = userRole !== UserRole.SALES;
     const where = canSeeAll ? { isAnonymized: false } : { ownerId: userId, isAnonymized: false };
 
-    const leads = await this.prisma.lead.findMany({
+    const groupedLeads = await this.prisma.lead.groupBy({
+      by: ['ownerId', 'stage'],
       where,
-      include: {
-        owner: {
-          select: { id: true, firstName: true, lastName: true, email: true, role: true },
-        },
-      },
+      _count: { id: true },
     });
 
-    const ownerMap = new Map<string, any>();
+    if (groupedLeads.length === 0) {
+      return [];
+    }
 
-    for (const lead of leads) {
-      const key = lead.owner.id;
-      if (!ownerMap.has(key)) {
-        ownerMap.set(key, {
-          ownerId: lead.owner.id,
-          ownerName: `${lead.owner.firstName || ''} ${lead.owner.lastName || ''}`.trim() || lead.owner.email,
-          ownerRole: lead.owner.role,
+    const ownerIds = [...new Set(groupedLeads.map((lead) => lead.ownerId))];
+    const owners = await this.prisma.user.findMany({
+      where: { id: { in: ownerIds } },
+      select: { id: true, firstName: true, lastName: true, email: true, role: true },
+    });
+
+    const ownerMap = new Map(
+      owners.map((owner) => [
+        owner.id,
+        {
+          ownerId: owner.id,
+          ownerName: `${owner.firstName || ''} ${owner.lastName || ''}`.trim() || owner.email,
+          ownerRole: owner.role,
           total: 0,
           won: 0,
           lost: 0,
           newLeads: 0,
           conversionRate: 0,
-        });
-      }
-      const stats = ownerMap.get(key);
-      stats.total++;
-      if (lead.stage === LeadStage.WON) stats.won++;
-      else if (lead.stage === LeadStage.LOST) stats.lost++;
-      else if (lead.stage === LeadStage.NEW) stats.newLeads++;
+        },
+      ]),
+    );
+
+    for (const lead of groupedLeads) {
+      const stats = ownerMap.get(lead.ownerId);
+      if (!stats) continue;
+
+      const count = lead._count.id;
+      stats.total += count;
+      if (lead.stage === LeadStage.Gagne) stats.won += count;
+      else if (lead.stage === LeadStage.Perdu) stats.lost += count;
+      else if (lead.stage === LeadStage.Nouveau) stats.newLeads += count;
     }
 
     for (const stats of ownerMap.values()) {
@@ -156,8 +174,8 @@ export class DashboardService {
       const entry = trendMap.get(key);
       if (entry) {
         entry.created++;
-        if (lead.stage === LeadStage.WON) entry.won++;
-        if (lead.stage === LeadStage.LOST) entry.lost++;
+        if (lead.stage === LeadStage.Gagne) entry.won++;
+        if (lead.stage === LeadStage.Perdu) entry.lost++;
       }
     }
 
@@ -214,13 +232,19 @@ export class DashboardService {
   async getStageConversion(userId: string, userRole: UserRole) {
     const where = userRole === UserRole.SALES ? { ownerId: userId, isAnonymized: false } : { isAnonymized: false };
 
-    const stages: LeadStage[] = [LeadStage.NEW, LeadStage.CONTACTED, LeadStage.QUALIFIED, LeadStage.PROPOSAL, LeadStage.WON];
+    const stages: LeadStage[] = [
+      LeadStage.Nouveau,
+      LeadStage.Contacte,
+      LeadStage.Qualifie,
+      LeadStage.Proposition,
+      LeadStage.Gagne,
+    ];
     const stageLabels: Record<string, string> = {
-      [LeadStage.NEW]: 'Nouveau',
-      [LeadStage.CONTACTED]: 'Contacté',
-      [LeadStage.QUALIFIED]: 'Qualifié',
-      [LeadStage.PROPOSAL]: 'Proposition',
-      [LeadStage.WON]: 'Gagné',
+      [LeadStage.Nouveau]: 'Nouveau',
+      [LeadStage.Contacte]: 'Contacte',
+      [LeadStage.Qualifie]: 'Qualifie',
+      [LeadStage.Proposition]: 'Proposition',
+      [LeadStage.Gagne]: 'Gagne',
     };
 
     const counts: Record<string, number> = {};

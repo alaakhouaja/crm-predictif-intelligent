@@ -27,6 +27,7 @@ export function UsersPage() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [role, setRole] = useState<UserRole>('SALES');
+  const canManageUsers = user?.role === 'ADMIN';
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -52,6 +53,7 @@ export function UsersPage() {
   }, [load]);
 
   function openCreate() {
+    if (!canManageUsers) return;
     setMode('create');
     setEditingUserId(null);
     setEmail('');
@@ -63,6 +65,7 @@ export function UsersPage() {
   }
 
   function openEdit(u: AuthUser) {
+    if (!canManageUsers) return;
     setMode('edit');
     setEditingUserId(u.id);
     setEmail(u.email);
@@ -75,7 +78,7 @@ export function UsersPage() {
 
   async function onSubmitUser(e: FormEvent) {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !canManageUsers) return;
     setError(null);
     try {
       if (mode === 'create') {
@@ -109,7 +112,7 @@ export function UsersPage() {
   }
 
   async function onDeleteUser(id: string) {
-    if (!user || !window.confirm('Supprimer cet utilisateur ?')) return;
+    if (!user || !canManageUsers || !window.confirm('Supprimer cet utilisateur ?')) return;
     try {
       await api(`/users/${id}`, { method: 'DELETE' });
       await load();
@@ -128,10 +131,12 @@ export function UsersPage() {
           <button type="button" className="secondary small" onClick={() => window.location.reload()}>
             Actualiser
           </button>
-          <button type="button" className="primary" onClick={openCreate}>
-            <Plus size={18} />
-            Ajouter
-          </button>
+          {canManageUsers && (
+            <button type="button" className="primary" onClick={openCreate}>
+              <Plus size={18} />
+              Ajouter
+            </button>
+          )}
         </div>
       </div>
 
@@ -190,9 +195,11 @@ export function UsersPage() {
                 {error && <p className="error" style={{ gridColumn: '1 / -1', margin: 0 }}>{error}</p>}
 
                 <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-                  <button type="submit" className="primary" style={{ flex: 1 }}>
-                    {mode === 'create' ? 'Créer' : 'Enregistrer'}
-                  </button>
+                  {canManageUsers && (
+                    <button type="submit" className="primary" style={{ flex: 1 }}>
+                      {mode === 'create' ? 'Créer' : 'Enregistrer'}
+                    </button>
+                  )}
                   <button type="button" className="secondary" style={{ flex: 1 }} onClick={() => setModalOpen(false)}>
                     Annuler
                   </button>
@@ -227,12 +234,16 @@ export function UsersPage() {
                   <td className="muted small">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '—'}</td>
                   <td>
                     <div className="row-gap">
-                      <button className="secondary small" onClick={() => openEdit(u)} style={{ padding: '0.4rem' }}>
-                        <Pencil size={16} />
-                      </button>
-                      <button className="secondary small" onClick={() => onDeleteUser(u.id)} style={{ padding: '0.4rem', color: 'var(--danger)' }}>
-                        <Trash2 size={16} />
-                      </button>
+                      {canManageUsers && (
+                        <>
+                          <button className="secondary small" onClick={() => openEdit(u)} style={{ padding: '0.4rem' }}>
+                            <Pencil size={16} />
+                          </button>
+                          <button className="secondary small" onClick={() => onDeleteUser(u.id)} style={{ padding: '0.4rem', color: 'var(--danger)' }}>
+                            <Trash2 size={16} />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

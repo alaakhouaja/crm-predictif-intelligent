@@ -15,12 +15,12 @@ enum UserRole {
 }
 
 enum LeadStage {
-  NEW
-  CONTACTED
-  QUALIFIED
-  PROPOSAL
-  WON
-  LOST
+  Nouveau
+  Contacte
+  Qualifie
+  Proposition
+  Gagne
+  Perdu
 }
 
 enum InteractionType {
@@ -31,12 +31,10 @@ enum InteractionType {
 }
 
 enum TaskType {
-  SALES
-  MARKETING
-  SUPPORT
   CALL
+  EMAIL
   MEETING
-  EMAIL_FOLLOW_UP
+  TODO
 }
 
 enum TaskStatus {
@@ -58,6 +56,8 @@ model User {
   passwordHash  String
   firstName     String?
   lastName      String?
+  phone         String?
+  profilePhotoPath String?
   role          UserRole       @default(SALES)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -78,7 +78,7 @@ model Lead {
   phone                 String?
   company               String?
   source                String?
-  stage                 LeadStage     @default(NEW)
+  stage                 LeadStage     @default(Nouveau)
   score                 Float?
   conversionProbability Float?
   notes                 String?
@@ -115,7 +115,7 @@ model Task {
   id                String       @id @default(uuid())
   title             String
   description       String?
-  type              TaskType     @default(SALES)
+  type              TaskType     @default(TODO)
   status            TaskStatus   @default(OPEN)
   priority          TaskPriority @default(MEDIUM)
   progress          Int          @default(0)

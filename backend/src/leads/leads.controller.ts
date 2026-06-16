@@ -14,6 +14,7 @@ import {
   UseInterceptors,
   UploadedFile,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
@@ -97,7 +98,14 @@ export class LeadsController {
   ) {
     const expected = process.env.WEBHOOK_SECRET;
     const provided = secretHeader ?? secretQuery;
-    if (!expected || provided !== expected) {
+    const expectedBuffer = Buffer.from(expected ?? '');
+    const providedBuffer = Buffer.from(provided || '');
+
+    if (
+      !expected ||
+      expectedBuffer.length !== providedBuffer.length ||
+      !crypto.timingSafeEqual(expectedBuffer, providedBuffer)
+    ) {
       throw new ForbiddenException('Invalid webhook secret');
     }
     return this.leads.createFromWebhook(dto);
@@ -117,10 +125,10 @@ export class LeadsController {
 
   @Get('export-ai')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.EXECUTIVE)
+  @Roles(UserRole.ADMIN, UserRole.EXECUTIVE, UserRole.SALES)
   @ApiOperation({ summary: 'Export won/lost leads for AI training' })
-  exportAI() {
-    return this.leads.exportForAI();
+  exportAI(@CurrentUser() user: AuthUser) {
+    return this.leads.exportForAI(user);
   }
 
   @Get()
@@ -156,6 +164,18 @@ export class LeadsController {
       startDate,
       endDate,
     });
+  }
+
+  @Get(':id/activity')
+  @ApiOperation({ summary: "Historique d'un lead" })
+  activity(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.leads.getActivity(user, id);
+  }
+
+  @Get(':id/prediction')
+  @ApiOperation({ summary: "Prédiction IA d'un lead" })
+  prediction(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.leads.getPrediction(user, id);
   }
 
   @Get(':id')

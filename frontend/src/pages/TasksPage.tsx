@@ -10,7 +10,7 @@ import type { AuditLogEntry, AuthUser, PaginatedResponse, Task, TaskAttachment, 
 
 const statuses: TaskStatus[] = ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELED'];
 const priorities: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
-const types: TaskType[] = ['SALES', 'MARKETING', 'SUPPORT', 'CALL', 'MEETING', 'EMAIL_FOLLOW_UP'];
+const types: TaskType[] = ['CALL', 'EMAIL', 'MEETING', 'TODO'];
 
 type SortBy = '' | 'priority' | 'dueDate' | 'status' | 'progress' | 'createdAt';
 type SortDir = 'asc' | 'desc';
@@ -34,13 +34,16 @@ export function TasksPage() {
   const [sortBy, setSortBy] = useState<SortBy>('');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  const canCreate = user?.role !== 'EXECUTIVE';
+  const canCreate = !!user;
   const isAdmin = user?.role === 'ADMIN';
+  const isExecutive = user?.role === 'EXECUTIVE';
+  const canAssignOtherUsers = isAdmin || isExecutive;
 
   const allowedTypes = useMemo<TaskType[]>(() => {
     if (user?.role === 'ADMIN') return types;
-    if (user?.role === 'SALES') return ['SALES', 'CALL', 'MEETING', 'EMAIL_FOLLOW_UP'];
-    if (user?.role === 'MARKETING') return ['MARKETING', 'EMAIL_FOLLOW_UP'];
+    if (user?.role === 'EXECUTIVE') return types;
+    if (user?.role === 'SALES') return types;
+    if (user?.role === 'MARKETING') return types;
     return [];
   }, [user?.role]);
 
@@ -49,7 +52,7 @@ export function TasksPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [type, setType] = useState<TaskType>('SALES');
+  const [type, setType] = useState<TaskType>('TODO');
   const [priority, setPriority] = useState<TaskPriority>('MEDIUM');
   const [progress, setProgress] = useState(0);
   const [dueDate, setDueDate] = useState('');
@@ -59,7 +62,7 @@ export function TasksPage() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editType, setEditType] = useState<TaskType>('SALES');
+  const [editType, setEditType] = useState<TaskType>('TODO');
   const [editPriority, setEditPriority] = useState<TaskPriority>('MEDIUM');
   const [editStatus, setEditStatus] = useState<TaskStatus>('OPEN');
   const [editProgress, setEditProgress] = useState(0);
@@ -116,17 +119,19 @@ export function TasksPage() {
   }, [filterOverdue, filterStatus, filterType, search, user]);
 
   const loadUsers = useCallback(async () => {
-    if (!user || !isAdmin) return;
+    if (!user || !canAssignOtherUsers) return;
     try {
       const res = await api<PaginatedResponse<AuthUser>>(
         '/users?page=1&limit=200',
       );
-      if (res?.data) setUsers(res.data);
+      if (res?.data) {
+        setUsers(res.data.filter((candidate) => candidate.role === 'SALES'));
+      }
       else setUsers([]);
     } catch {
       setUsers([]);
     }
-  }, [isAdmin, user]);
+  }, [canAssignOtherUsers, user]);
 
   const loadTaskDetails = useCallback(async (taskId: string) => {
     if (!user) return;
@@ -188,14 +193,18 @@ export function TasksPage() {
     setPriority('MEDIUM');
     setProgress(0);
     setDueDate('');
-    setType(allowedTypes[0] ?? 'SALES');
+    setType(allowedTypes[0] ?? 'TODO');
     setAssignedToId('');
     setModalOpen(true);
   }
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !canCreate) return;
+    if (isExecutive && !assignedToId) {
+      setError('Choisissez un commercial pour cette tache.');
+      return;
+    }
     setError(null);
     try {
       await api<Task>('/tasks', {
@@ -207,7 +216,7 @@ export function TasksPage() {
           priority,
           progress,
           dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
-          assignedToId: isAdmin && assignedToId ? assignedToId : undefined,
+          assignedToId: canAssignOtherUsers && assignedToId ? assignedToId : undefined,
         }),
       });
       setModalOpen(false);
@@ -276,7 +285,7 @@ export function TasksPage() {
   }
 
   async function markDone(task: Task) {
-    if (!user) return;
+    if (!user || !canUpdate(task)) return;
     try {
       await api<Task>(`/tasks/${task.id}`, {
         method: 'PATCH',
@@ -290,7 +299,7 @@ export function TasksPage() {
   }
 
   async function cancelTask(task: Task) {
-    if (!user) return;
+    if (!user || !canUpdate(task)) return;
     try {
       await api<Task>(`/tasks/${task.id}`, {
         method: 'PATCH',
@@ -327,7 +336,7 @@ export function TasksPage() {
   }
 
   async function uploadAttachment(file: File) {
-    if (!user || !editing) return;
+    if (!user || !editing || !canUpdate(editing)) return;
     setUploading(true);
     setAttachmentError(null);
     try {
@@ -369,7 +378,7 @@ export function TasksPage() {
   }
 
   async function removeAttachment(att: TaskAttachment) {
-    if (!user || !editing) return;
+    if (!user || !editing || !canUpdate(editing)) return;
     if (!window.confirm('Supprimer cette pièce jointe ?')) return;
     try {
       await api(`/tasks/attachments/${att.id}`, { method: 'DELETE' });
@@ -553,7 +562,7 @@ export function TasksPage() {
                 <option value="">Tous</option>
                 {(isAdmin ? types : allowedTypes).map((t) => (
                   <option key={t} value={t}>
-                    {t}
+                    {t === 'CALL' ? 'Appel' : t === 'EMAIL' ? 'E-mail' : t === 'MEETING' ? 'Reunion' : 'Autre tache'}
                   </option>
                 ))}
               </select>
@@ -624,7 +633,9 @@ export function TasksPage() {
                           )}
                         </td>
                         <td>
-                          <span className={`badge ${t.type === 'MARKETING' ? 'badge-orange' : 'badge-blue'}`}>{t.type}</span>
+                          <span className="badge badge-blue">
+                            {t.type === 'CALL' ? 'Appel' : t.type === 'EMAIL' ? 'E-mail' : t.type === 'MEETING' ? 'Reunion' : 'Autre tache'}
+                          </span>
                         </td>
                         <td>
                           <span className={`badge ${t.priority === 'HIGH' ? 'badge-red' : t.priority === 'LOW' ? 'badge-green' : 'badge-blue'}`}>
@@ -877,7 +888,7 @@ export function TasksPage() {
                   <select value={type} onChange={(e) => setType(e.target.value as TaskType)}>
                     {allowedTypes.map((t) => (
                       <option key={t} value={t}>
-                        {t}
+                        {t === 'CALL' ? 'Appel' : t === 'EMAIL' ? 'E-mail' : t === 'MEETING' ? 'Reunion' : 'Autre tache'}
                       </option>
                     ))}
                   </select>
@@ -902,11 +913,13 @@ export function TasksPage() {
                   <input type="number" min={0} max={100} value={progress} onChange={(e) => setProgress(Math.max(0, Math.min(100, Number(e.target.value))))} />
                 </div>
 
-                {isAdmin && (
+                {canAssignOtherUsers && (
                   <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Assigné à</label>
+                    <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>
+                      {isExecutive ? 'Commercial assigne' : 'Assigne a'}
+                    </label>
                     <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)}>
-                      <option value="">Moi-même</option>
+                      <option value="">{isExecutive ? 'Choisir un sales' : 'Non assigne'}</option>
                       {users.map((u) => (
                         <option key={u.id} value={u.id}>
                           {`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email} ({u.role})
@@ -973,7 +986,7 @@ export function TasksPage() {
                   <select value={editType} onChange={(e) => setEditType(e.target.value as TaskType)} disabled={readOnly || (!isAdmin && allowedTypes.length === 0)}>
                     {(isAdmin ? types : allowedTypes).map((t) => (
                       <option key={t} value={t}>
-                        {t}
+                        {t === 'CALL' ? 'Appel' : t === 'EMAIL' ? 'E-mail' : t === 'MEETING' ? 'Reunion' : 'Autre tache'}
                       </option>
                     ))}
                   </select>

@@ -1,22 +1,20 @@
 export type UserRole = 'ADMIN' | 'SALES' | 'MARKETING' | 'EXECUTIVE';
 
 export type LeadStage =
-  | 'NEW'
-  | 'CONTACTED'
-  | 'QUALIFIED'
-  | 'PROPOSAL'
-  | 'WON'
-  | 'LOST';
+  | 'Nouveau'
+  | 'Contacte'
+  | 'Qualifie'
+  | 'Proposition'
+  | 'Gagne'
+  | 'Perdu';
 
 export type InteractionType = 'EMAIL' | 'CALL' | 'MEETING' | 'NOTE';
 
 export type TaskType =
-  | 'SALES'
-  | 'MARKETING'
-  | 'SUPPORT'
   | 'CALL'
+  | 'EMAIL'
   | 'MEETING'
-  | 'EMAIL_FOLLOW_UP';
+  | 'TODO';
 
 export type TaskStatus = 'OPEN' | 'IN_PROGRESS' | 'DONE' | 'CANCELED';
 
@@ -28,7 +26,10 @@ export type AuthUser = {
   role: UserRole;
   firstName: string | null;
   lastName: string | null;
+  phone: string | null;
   createdAt?: string;
+  updatedAt?: string;
+  profilePhotoUrl?: string | null;
 };
 
 export type Lead = {
@@ -53,6 +54,12 @@ export type Lead = {
   };
   createdAt: string;
   updatedAt: string;
+};
+
+export type LeadPrediction = {
+  probability: number;
+  score: number;
+  label: 'Élevée' | 'Moyenne' | 'Faible';
 };
 
 export type Interaction = {

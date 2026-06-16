@@ -23,7 +23,7 @@ npx prisma migrate deploy
 npx prisma db seed
 ```
 
-Compte seed par défaut : `admin@example.com` / `Admin123!`
+Compte seed par défaut : `alaa@gmail.com` / `alaa1919`
 
 ### 3) Lancer l’API
 ```bash

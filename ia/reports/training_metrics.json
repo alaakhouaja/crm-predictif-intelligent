@@ -1,0 +1,58 @@
+{
+  "model_type": "CatBoostClassifier",
+  "target": "converted",
+  "features": [
+    "source",
+    "has_company",
+    "owner_role",
+    "interaction_count",
+    "call_count",
+    "email_interaction_count",
+    "meeting_interaction_count",
+    "task_count",
+    "completed_task_count",
+    "open_task_count",
+    "overdue_task_count",
+    "call_task_count",
+    "email_task_count",
+    "meeting_task_count",
+    "todo_task_count",
+    "avg_task_progress",
+    "days_since_last_activity",
+    "days_since_creation"
+  ],
+  "categorical_features": [
+    "source",
+    "owner_role"
+  ],
+  "metrics": {
+    "train_size": 218,
+    "test_size": 55,
+    "positive_train_count": 77,
+    "positive_test_count": 20,
+    "negative_train_count": 141,
+    "negative_test_count": 35,
+    "class_weights": [
+      1.0,
+      1.8312
+    ],
+    "best_threshold": 0.0311,
+    "accuracy": 0.7090909090909091,
+    "precision": 0.5555555555555556,
+    "recall": 1.0,
+    "f1_score": 0.7142857142857143,
+    "roc_auc": 0.7935714285714286,
+    "confusion_matrix": [
+      [
+        19,
+        16
+      ],
+      [
+        0,
+        20
+      ]
+    ]
+  },
+  "model_path": "ia/models/lead_conversion_catboost.cbm",
+  "feature_importance_path": "C:\\Users\\LVIG\\Desktop\\CRM\\ia\\reports\\feature_importance.csv"
+}

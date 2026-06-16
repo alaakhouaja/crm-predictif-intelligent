@@ -26,6 +26,30 @@ export class NotificationsService {
     return notification;
   }
 
+  async createForAll(title: string, content: string) {
+    const users = await this.prisma.user.findMany({
+      select: { id: true },
+    });
+
+    const notifications = await this.prisma.$transaction(
+      users.map(({ id }) =>
+        this.prisma.notification.create({
+          data: {
+            userId: id,
+            title,
+            content,
+          },
+        }),
+      ),
+    );
+
+    for (const notification of notifications) {
+      this.gateway.sendToUser(notification.userId, 'notification', notification);
+    }
+
+    return notifications;
+  }
+
   async findAll(userId: string) {
     return this.prisma.notification.findMany({
       where: { userId },

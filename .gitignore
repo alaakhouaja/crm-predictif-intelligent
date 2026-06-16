@@ -45,3 +45,8 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+
+# Python artifacts
+__pycache__/
+*.pyc
+catboost_info/

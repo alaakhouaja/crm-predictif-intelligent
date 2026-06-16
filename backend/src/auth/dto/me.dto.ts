@@ -13,15 +13,20 @@ export class UpdateMeDto {
   @IsString()
   @MinLength(1)
   lastName?: string;
+
+  @ApiPropertyOptional({ example: '+33 6 12 34 56 78' })
+  @IsOptional()
+  @IsString()
+  phone?: string;
 }
 
 export class ChangePasswordDto {
-  @ApiProperty({ example: 'Admin123!' })
+  @ApiProperty({ example: 'alaa1919' })
   @IsString()
   @MinLength(8)
   oldPassword: string;
 
-  @ApiProperty({ example: 'NewAdmin123!' })
+  @ApiProperty({ example: 'alaa2020' })
   @IsString()
   @MinLength(8)
   newPassword: string;

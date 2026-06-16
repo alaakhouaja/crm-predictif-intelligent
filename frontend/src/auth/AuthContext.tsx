@@ -8,11 +8,13 @@ import {
   type ReactNode,
 } from 'react';
 import { api } from '../api/client';
+import { loadProfilePhotoObjectUrl } from '../utils/profilePhoto';
 import type { AuthUser } from '../types';
 
 type AuthState = {
   user: AuthUser | null;
   loading: boolean;
+  photoSrc: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
@@ -23,15 +25,31 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [photoSrc, setPhotoSrc] = useState<string | null>(null);
+
+  const loadPhoto = useCallback(async (photoUrl: string | null | undefined) => {
+    if (!photoUrl) {
+      setPhotoSrc(null);
+      return;
+    }
+    try {
+      const src = await loadProfilePhotoObjectUrl(photoUrl);
+      setPhotoSrc(src);
+    } catch {
+      setPhotoSrc(null);
+    }
+  }, []);
 
   const refreshMe = useCallback(async () => {
     try {
       const me = await api<AuthUser>('/auth/me');
       setUser(me);
+      await loadPhoto(me.profilePhotoUrl);
     } catch {
       setUser(null);
+      setPhotoSrc(null);
     }
-  }, []);
+  }, [loadPhoto]);
 
   const login = useCallback(async (email: string, password: string) => {
     await api('/auth/login', {
@@ -55,7 +73,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       try {
         const me = await api<AuthUser>('/auth/me');
-        if (!cancelled) setUser(me);
+        if (!cancelled) {
+          setUser(me);
+          await loadPhoto(me.profilePhotoUrl);
+        }
       } catch {
         if (!cancelled) setUser(null);
       } finally {
@@ -65,17 +86,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadPhoto]);
 
   const value = useMemo(
     () => ({
       user,
       loading,
+      photoSrc,
       login,
       logout,
       refreshMe,
     }),
-    [user, loading, login, logout, refreshMe],
+    [user, loading, photoSrc, login, logout, refreshMe],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

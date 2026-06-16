@@ -51,7 +51,7 @@ export class TasksController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SALES, UserRole.MARKETING)
+  @Roles(UserRole.ADMIN, UserRole.SALES, UserRole.MARKETING, UserRole.EXECUTIVE)
   @ApiOperation({ summary: 'Créer une tâche' })
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateTaskDto) {
     return this.tasks.create(user, dto);

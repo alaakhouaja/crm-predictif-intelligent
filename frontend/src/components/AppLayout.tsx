@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { 
-  Users, 
-  LayoutDashboard, 
-  Kanban, 
+import {
+  Users,
+  LayoutDashboard,
+  Kanban,
   Search,
   CheckSquare,
   ChevronRight,
@@ -21,7 +21,7 @@ interface LayoutProps {
 }
 
 export function AppLayout({ children }: LayoutProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, photoSrc } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -196,7 +196,13 @@ export function AppLayout({ children }: LayoutProps) {
               className="user-menu-trigger"
               onClick={() => setMenuOpen((v) => !v)}
             >
-              <span className="user-avatar">{initials}</span>
+              <span className="user-avatar">
+                {photoSrc ? (
+                  <img src={photoSrc} alt="Photo de profil" />
+                ) : (
+                  initials
+                )}
+              </span>
               <span className="user-name">{user?.firstName ?? user?.email}</span>
               <ChevronDown size={16} className="text-muted" />
             </button>

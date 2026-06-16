@@ -51,12 +51,12 @@ interface ActivityData {
 }
 
 const STAGE_COLORS: Record<string, string> = {
-  NEW: '#3b82f6',
-  CONTACTED: '#8b5cf6',
-  QUALIFIED: '#f59e0b',
-  PROPOSAL: '#f97316',
-  WON: '#10b981',
-  LOST: '#ef4444',
+  Nouveau: '#3b82f6',
+  Contacte: '#8b5cf6',
+  Qualifie: '#f59e0b',
+  Proposition: '#f97316',
+  Gagne: '#10b981',
+  Perdu: '#ef4444',
 };
 
 const INTERACTION_ICONS: Record<string, React.ReactNode> = {

@@ -16,6 +16,7 @@ import {
   Phone,
   Building2,
   Calendar,
+  Activity,
   MoreVertical,
   X,
   Edit2,
@@ -27,18 +28,23 @@ import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
 import { formatDateTime } from '../utils/datetime';
-import type { Lead, LeadStage, PaginatedResponse, Interaction, InteractionType, Task } from '../types';
-
-const stages: LeadStage[] = [
-  'NEW',
-  'CONTACTED',
-  'QUALIFIED',
-  'PROPOSAL',
-  'WON',
-  'LOST',
-];
+import type {
+  AuditLogEntry,
+  AuthUser,
+  Lead,
+  LeadPrediction,
+  LeadStage,
+  PaginatedResponse,
+  Interaction,
+  InteractionType,
+  Task,
+  TaskPriority,
+  TaskType,
+} from '../types';
 
 const interactionTypes: InteractionType[] = ['EMAIL', 'CALL', 'MEETING', 'NOTE'];
+const taskPriorities: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
+const allTaskTypes: TaskType[] = ['CALL', 'EMAIL', 'MEETING', 'TODO'];
 
 export function LeadsPage() {
   const { user } = useAuth();
@@ -53,6 +59,11 @@ export function LeadsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [importSummary, setImportSummary] = useState<{
+    addedCount: number;
+    existingCount: number;
+    errorCount: number;
+  } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Formulaire Lead (Creation)
@@ -71,12 +82,24 @@ export function LeadsPage() {
   const [loadingInteractions, setLoadingInteractions] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState('');
+  const [newTaskType, setNewTaskType] = useState<TaskType>('TODO');
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>('MEDIUM');
+  const [newTaskProgress, setNewTaskProgress] = useState(0);
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [newTaskAssignedToId, setNewTaskAssignedToId] = useState('');
   const [loadingTasks, setLoadingTasks] = useState(false);
+  const [leadActivityLogs, setLeadActivityLogs] = useState<AuditLogEntry[]>([]);
+  const [loadingLeadActivity, setLoadingLeadActivity] = useState(false);
+  const [leadPrediction, setLeadPrediction] = useState<LeadPrediction | null>(null);
+  const [loadingLeadPrediction, setLoadingLeadPrediction] = useState(false);
+  const [leadPredictionError, setLeadPredictionError] = useState<string | null>(null);
+  const [assignableUsers, setAssignableUsers] = useState<AuthUser[]>([]);
 
   // Modaux
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isTaskCreateModalOpen, setIsTaskCreateModalOpen] = useState(false);
 
   // États d'édition
   const [editFirstName, setEditFirstName] = useState('');
@@ -86,7 +109,7 @@ export function LeadsPage() {
   const [editCompany, setEditCompany] = useState('');
   const [editSource, setEditSource] = useState('');
   const [editNotes, setEditNotes] = useState('');
-  const [editStage, setEditStage] = useState<LeadStage>('NEW');
+  const [editStage, setEditStage] = useState<LeadStage>('Nouveau');
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -110,6 +133,19 @@ export function LeadsPage() {
       setLoading(false);
     }
   }, [filter, page, search, showArchived, user]);
+
+  const loadLeadActivity = useCallback(async (leadId: string) => {
+    if (!user) return;
+    setLoadingLeadActivity(true);
+    try {
+      const logs = await api<AuditLogEntry[]>(`/leads/${leadId}/activity`);
+      setLeadActivityLogs(logs ?? []);
+    } catch {
+      setLeadActivityLogs([]);
+    } finally {
+      setLoadingLeadActivity(false);
+    }
+  }, [user]);
 
   async function onExportAiDataset() {
     if (!user) return;
@@ -242,24 +278,35 @@ export function LeadsPage() {
 
   async function onImportCSV(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !user) return;
+    if (!file || !user || !canImportLead) return;
 
     const formData = new FormData();
     formData.append('file', file);
 
     setLoading(true);
+    setImportSummary(null);
     try {
-      const res = await api<{ message: string }>('/leads/import', {
+      const res = await api<{
+        message: string;
+        addedCount: number;
+        existingCount: number;
+        errorCount: number;
+      }>('/leads/import', {
         method: 'POST',
         body: formData,
         // Ne pas mettre de Content-Type ici pour que fetch le gère automatiquement avec le boundary
         headers: {} 
       });
       if (res) {
-        toast.success(res.message, 'Import');
+        setImportSummary({
+          addedCount: res.addedCount,
+          existingCount: res.existingCount,
+          errorCount: res.errorCount,
+        });
         await load();
       }
     } catch (err) {
+      setImportSummary(null);
       toast.error(err instanceof Error ? err.message : "Erreur lors de l'importation", 'Import');
     } finally {
       setLoading(false);
@@ -307,6 +354,23 @@ export function LeadsPage() {
     }
   }, [user]);
 
+  const loadLeadPrediction = useCallback(async (leadId: string) => {
+    if (!user) return;
+    setLoadingLeadPrediction(true);
+    setLeadPredictionError(null);
+    try {
+      const res = await api<LeadPrediction>(`/leads/${leadId}/prediction`);
+      setLeadPrediction(res ?? null);
+    } catch (err) {
+      setLeadPrediction(null);
+      setLeadPredictionError(
+        err instanceof Error ? err.message : 'Service IA indisponible',
+      );
+    } finally {
+      setLoadingLeadPrediction(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -320,24 +384,53 @@ export function LeadsPage() {
   }, [searchParams, search]);
 
   const canCreateLead = user?.role === 'ADMIN' || user?.role === 'SALES' || user?.role === 'MARKETING';
-  const canEditLead = user?.role === 'ADMIN' || user?.role === 'SALES' || user?.role === 'MARKETING';
-  const canEditCommercial = user?.role === 'ADMIN' || user?.role === 'SALES';
+  const canImportLead = user?.role === 'ADMIN' || user?.role === 'MARKETING';
+  const isAdmin = user?.role === 'ADMIN';
+  const isExecutive = user?.role === 'EXECUTIVE';
+  const canAssignTaskToOthers = isAdmin || isExecutive;
+  const canEditLead =
+    !!user &&
+    !!selectedLead &&
+    (user.role === 'ADMIN' || selectedLead.ownerId === user.id);
+  const canEditCommercial =
+    !!user &&
+    !!selectedLead &&
+    (user.role === 'ADMIN' || (user.role === 'SALES' && selectedLead.ownerId === user.id));
   const canArchive = user?.role === 'ADMIN';
   const canDeleteLead = user?.role === 'ADMIN';
   const canExportLead = !!user;
   const canExportAiDataset = user?.role === 'ADMIN' || user?.role === 'EXECUTIVE';
-  const canAddInteraction = user?.role === 'ADMIN' || user?.role === 'SALES';
-  const canAddTask = user?.role === 'ADMIN' || user?.role === 'SALES' || user?.role === 'MARKETING';
+  const canAddInteraction =
+    !!user &&
+    !!selectedLead &&
+    (user.role === 'ADMIN' || (user.role === 'SALES' && selectedLead.ownerId === user.id));
+  const canAddTask =
+    !!user &&
+    !!selectedLead &&
+    (user.role === 'ADMIN' ||
+      user.role === 'EXECUTIVE' ||
+      user.role === 'MARKETING' ||
+      (user.role === 'SALES' && selectedLead.ownerId === user.id));
   const canUpdateTask = (t: Task) => {
     if (!user || user.role === 'EXECUTIVE') return false;
     if (user.role === 'ADMIN') return true;
     return t.createdById === user.id || t.assignedToId === user.id;
   };
+  const allowedTaskTypes: TaskType[] =
+    user?.role === 'ADMIN'
+      ? allTaskTypes
+      : user?.role === 'EXECUTIVE' || user?.role === 'SALES'
+        ? allTaskTypes
+        : user?.role === 'MARKETING'
+          ? allTaskTypes
+          : [];
 
   useEffect(() => {
     if (selectedLead) {
       void loadInteractions(selectedLead.id);
       void loadTasks(selectedLead.id);
+      void loadLeadActivity(selectedLead.id);
+      void loadLeadPrediction(selectedLead.id);
       setIsEditModalOpen(false); // Reset edit modal on lead change
       setEditFirstName(selectedLead.firstName);
       setEditLastName(selectedLead.lastName);
@@ -350,15 +443,46 @@ export function LeadsPage() {
     } else {
       setInteractions([]);
       setTasks([]);
+      setLeadActivityLogs([]);
+      setLeadPrediction(null);
+      setLeadPredictionError(null);
       setNewTaskTitle('');
+      setNewTaskDescription('');
+      setNewTaskType('TODO');
+      setNewTaskPriority('MEDIUM');
+      setNewTaskProgress(0);
       setNewTaskDueDate('');
+      setNewTaskAssignedToId('');
       setIsEditModalOpen(false);
+      setIsTaskCreateModalOpen(false);
     }
-  }, [loadInteractions, loadTasks, selectedLead]);
+  }, [loadInteractions, loadLeadActivity, loadLeadPrediction, loadTasks, selectedLead]);
+
+  useEffect(() => {
+    if (!allowedTaskTypes.length) return;
+    if (!allowedTaskTypes.includes(newTaskType)) {
+      setNewTaskType(allowedTaskTypes[0]);
+    }
+  }, [allowedTaskTypes, newTaskType]);
+
+  const loadAssignableUsers = useCallback(async () => {
+    if (!user || !canAssignTaskToOthers) return;
+    try {
+      const res = await api<PaginatedResponse<AuthUser>>('/users?page=1&limit=200');
+      const users = res?.data ?? [];
+      setAssignableUsers(users.filter((candidate) => candidate.role === 'SALES'));
+    } catch {
+      setAssignableUsers([]);
+    }
+  }, [canAssignTaskToOthers, user]);
+
+  useEffect(() => {
+    void loadAssignableUsers();
+  }, [loadAssignableUsers]);
 
   async function onUpdateLead(e: FormEvent) {
     e.preventDefault();
-    if (!user || !selectedLead) return;
+    if (!user || !selectedLead || !canEditLead) return;
     try {
       const payload: Record<string, unknown> = {
         firstName: editFirstName,
@@ -377,6 +501,7 @@ export function LeadsPage() {
       });
       setSelectedLead(updated);
       setIsEditModalOpen(false);
+      void loadLeadPrediction(updated.id);
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Modification impossible', 'Lead');
@@ -384,7 +509,7 @@ export function LeadsPage() {
   }
 
   async function onArchiveLead() {
-    if (!user || !selectedLead || !window.confirm('Archiver ce lead ?')) return;
+    if (!user || !selectedLead || !canArchive || !window.confirm('Archiver ce lead ?')) return;
     try {
       const updated = await api<Lead>(`/leads/${selectedLead.id}/archive`, {
         method: 'POST',
@@ -397,7 +522,7 @@ export function LeadsPage() {
   }
 
   async function onUnarchiveLead() {
-    if (!user || !selectedLead || !window.confirm('Désarchiver ce lead ?')) return;
+    if (!user || !selectedLead || !canArchive || !window.confirm('Désarchiver ce lead ?')) return;
     try {
       const updated = await api<Lead>(`/leads/${selectedLead.id}/unarchive`, {
         method: 'POST',
@@ -410,7 +535,7 @@ export function LeadsPage() {
   }
 
   async function onDeleteLead() {
-    if (!user || !selectedLead || !window.confirm('Supprimer ce lead définitivement ?')) return;
+    if (!user || !selectedLead || !canDeleteLead || !window.confirm('Supprimer ce lead définitivement ?')) return;
     try {
       await api<Lead>(`/leads/${selectedLead.id}`, {
         method: 'DELETE',
@@ -424,7 +549,7 @@ export function LeadsPage() {
 
   async function onCreateLead(e: FormEvent) {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !canCreateLead) return;
     setError(null);
     try {
       await api<Lead>('/leads', {
@@ -455,7 +580,7 @@ export function LeadsPage() {
 
   async function onCreateInteraction(e: FormEvent) {
     e.preventDefault();
-    if (!user || !selectedLead || !newInteractionContent) return;
+    if (!user || !selectedLead || !newInteractionContent || !canAddInteraction) return;
     try {
       await api<Interaction>('/interactions', {
         method: 'POST',
@@ -467,6 +592,7 @@ export function LeadsPage() {
       });
       setNewInteractionContent('');
       await loadInteractions(selectedLead.id);
+      void loadLeadPrediction(selectedLead.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erreur création interaction', 'Interaction');
     }
@@ -475,19 +601,35 @@ export function LeadsPage() {
   async function onCreateTask(e: FormEvent) {
     e.preventDefault();
     if (!user || !selectedLead || !newTaskTitle || !canAddTask) return;
+    if (isExecutive && !newTaskAssignedToId) {
+      toast.error('Choisissez un commercial pour cette tache.', 'Tache');
+      return;
+    }
     try {
       await api<Task>('/tasks', {
         method: 'POST',
         body: JSON.stringify({
           title: newTaskTitle,
+          description: newTaskDescription || undefined,
           leadId: selectedLead.id,
+          type: newTaskType,
+          priority: newTaskPriority,
+          progress: newTaskProgress,
           dueDate: newTaskDueDate ? new Date(newTaskDueDate).toISOString() : undefined,
-          type: user?.role === 'MARKETING' ? 'MARKETING' : 'SALES',
+          assignedToId:
+            canAssignTaskToOthers && newTaskAssignedToId ? newTaskAssignedToId : undefined,
         }),
       });
       setNewTaskTitle('');
+      setNewTaskDescription('');
+      setNewTaskType(allowedTaskTypes[0] ?? 'TODO');
+      setNewTaskPriority('MEDIUM');
+      setNewTaskProgress(0);
       setNewTaskDueDate('');
+      setNewTaskAssignedToId('');
+      setIsTaskCreateModalOpen(false);
       await loadTasks(selectedLead.id);
+      void loadLeadPrediction(selectedLead.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erreur création tâche', 'Tâche');
     }
@@ -495,15 +637,92 @@ export function LeadsPage() {
 
   async function markTaskDone(id: string) {
     if (!user || !selectedLead) return;
+    const task = tasks.find((t) => t.id === id);
+    if (!task || !canUpdateTask(task)) return;
     try {
       await api<Task>(`/tasks/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: 'DONE' }),
       });
       await loadTasks(selectedLead.id);
+      void loadLeadPrediction(selectedLead.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Mise à jour impossible', 'Tâche');
     }
+  }
+
+  function leadActivityLabel(log: AuditLogEntry) {
+    switch (log.action) {
+      case 'CREATE':
+        return 'Lead cree';
+      case 'UPDATE':
+        return 'Lead modifie';
+      case 'ARCHIVE':
+        return 'Lead archive';
+      case 'UNARCHIVE':
+        return 'Lead desarchive';
+      case 'DELETE':
+        return 'Lead supprime';
+      default:
+        return log.action;
+    }
+  }
+
+  function formatAuditValue(value: unknown) {
+    if (value === null || value === undefined || value === '') return '—';
+    if (typeof value === 'boolean') return value ? 'Oui' : 'Non';
+    return String(value);
+  }
+
+  function leadActivityChanges(log: AuditLogEntry) {
+    const previous =
+      log.oldValue && typeof log.oldValue === 'object'
+        ? (log.oldValue as Record<string, unknown>)
+        : {};
+    const current =
+      log.newValue && typeof log.newValue === 'object'
+        ? (log.newValue as Record<string, unknown>)
+        : {};
+    const keys = Array.from(new Set([...Object.keys(previous), ...Object.keys(current)]));
+
+    return keys.map((key) => ({
+      key,
+      previous: previous[key],
+      current: current[key],
+    }));
+  }
+
+  function predictionBadgeStyle(label: LeadPrediction['label']) {
+    if (label === 'Élevée') {
+      return {
+        background: 'rgba(16, 185, 129, 0.15)',
+        color: 'var(--success)',
+        border: '1px solid rgba(16, 185, 129, 0.35)',
+      };
+    }
+    if (label === 'Moyenne') {
+      return {
+        background: 'rgba(245, 158, 11, 0.15)',
+        color: 'var(--warning)',
+        border: '1px solid rgba(245, 158, 11, 0.35)',
+      };
+    }
+    return {
+      background: 'rgba(239, 68, 68, 0.15)',
+      color: 'var(--danger)',
+      border: '1px solid rgba(239, 68, 68, 0.35)',
+    };
+  }
+
+  function openTaskCreateModal() {
+    setNewTaskTitle('');
+    setNewTaskDescription('');
+    setNewTaskType(allowedTaskTypes[0] ?? 'TODO');
+    setNewTaskPriority('MEDIUM');
+    setNewTaskProgress(0);
+    setNewTaskDueDate('');
+    setNewTaskAssignedToId('');
+    setIsTaskCreateModalOpen(true);
   }
 
   return (
@@ -586,8 +805,8 @@ export function LeadsPage() {
         {[
           { label: 'Total Leads', value: totalLeads, icon: UserPlus, color: '#7c3aed', trend: '+12%', bg: 'rgba(124, 58, 237, 0.1)' },
           { label: 'Conversion', value: '24.5%', icon: TrendingUp, color: '#10b981', trend: 'Objectif 30%', bg: 'rgba(16, 185, 129, 0.1)' },
-          { label: 'Qualifiés', value: leads.filter(l => l.stage === 'QUALIFIED').length, icon: Target, color: '#f59e0b', trend: 'En cours', bg: 'rgba(245, 158, 11, 0.1)' },
-          { label: 'Gagnés', value: leads.filter(l => l.stage === 'WON').length, icon: CheckCircle, color: '#059669', trend: 'Trimestre', bg: 'rgba(5, 150, 105, 0.1)' }
+          { label: 'Qualifies', value: leads.filter(l => l.stage === 'Qualifie').length, icon: Target, color: '#f59e0b', trend: 'En cours', bg: 'rgba(245, 158, 11, 0.1)' },
+          { label: 'Gagnes', value: leads.filter(l => l.stage === 'Gagne').length, icon: CheckCircle, color: '#059669', trend: 'Trimestre', bg: 'rgba(5, 150, 105, 0.1)' }
         ].map((stat, i) => (
           <motion.div 
             key={stat.label}
@@ -620,7 +839,7 @@ export function LeadsPage() {
                 <span className="badge badge-blue">{totalLeads} {showArchived ? 'archivés' : 'actifs'}</span>
               </div>
               <div className="row-gap">
-                {(user?.role === 'ADMIN' || user?.role === 'MARKETING') && (
+                {canImportLead && (
                   <button className="secondary small" onClick={() => fileInputRef.current?.click()}>
                     <FileUp size={14} /> Import
                     <input type="file" accept=".csv" ref={fileInputRef} style={{ display: 'none' }} onChange={onImportCSV} />
@@ -643,6 +862,20 @@ export function LeadsPage() {
                 </div>
               </div>
             </div>
+
+            {importSummary && (
+              <div className="import-summary-banner">
+                <div className="import-summary-icon">
+                  {importSummary.errorCount > 0 ? <AlertTriangle size={18} /> : <CheckCircle size={18} />}
+                </div>
+                <div className="import-summary-content">
+                  <div className="import-summary-title">Resume de l'import CSV</div>
+                  <div className="import-summary-text">
+                    {importSummary.addedCount} lead(s) ajoute(s), {importSummary.existingCount} deja existant(s), {importSummary.errorCount} erreur(s).
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="table-wrap">
               <table>
@@ -694,9 +927,9 @@ export function LeadsPage() {
                       </td>
                       <td>
                         <span className={`badge ${
-                          l.stage === 'WON' ? 'badge-green' : 
-                          l.stage === 'LOST' ? 'badge-red' : 
-                          l.stage === 'NEW' ? 'badge-blue' : 'badge-orange'
+                          l.stage === 'Gagne' ? 'badge-green' : 
+                          l.stage === 'Perdu' ? 'badge-red' : 
+                          l.stage === 'Nouveau' ? 'badge-blue' : 'badge-orange'
                         }`}>
                           {l.stage}
                         </span>
@@ -863,7 +1096,12 @@ export function LeadsPage() {
                           <div className="form-group">
                             <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Étape Pipeline</label>
                             <select value={editStage} onChange={e => setEditStage(e.target.value as LeadStage)} disabled={!canEditCommercial}>
-                              {stages.map(s => <option key={s} value={s}>{s}</option>)}
+                              <option value="Nouveau">Nouveau</option>
+                              <option value="Contacte">Contacte</option>
+                              <option value="Qualifie">Qualifie</option>
+                              <option value="Proposition">Proposition</option>
+                              <option value="Gagne">Gagne</option>
+                              <option value="Perdu">Perdu</option>
                             </select>
                           </div>
                           <div className="form-group">
@@ -874,6 +1112,99 @@ export function LeadsPage() {
                           <div style={{ gridColumn: 'span 2', display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                             <button type="submit" className="primary" style={{ flex: 1 }}>Sauvegarder</button>
                             <button type="button" className="secondary" style={{ flex: 1 }} onClick={() => setIsEditModalOpen(false)}>Fermer</button>
+                          </div>
+                        </form>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                  {isTaskCreateModalOpen && (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+                      <motion.div
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.9, opacity: 0 }}
+                        className="card"
+                        style={{ width: '100%', maxWidth: '700px', padding: '2.5rem' }}
+                      >
+                        <div className="flex-between" style={{ marginBottom: '2rem' }}>
+                          <h2 style={{ margin: 0 }}>Nouvelle tâche</h2>
+                          <button onClick={() => setIsTaskCreateModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)' }}><X /></button>
+                        </div>
+
+                        <form onSubmit={onCreateTask} className="grid-form" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                          <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                            <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Titre</label>
+                            <input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} required placeholder="Relancer le prospect" />
+                          </div>
+
+                          <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                            <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Description</label>
+                            <textarea
+                              value={newTaskDescription}
+                              onChange={(e) => setNewTaskDescription(e.target.value)}
+                              placeholder="Precisez l'objectif de la tache..."
+                              style={{ minHeight: '90px' }}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Type</label>
+                            <select value={newTaskType} onChange={(e) => setNewTaskType(e.target.value as TaskType)}>
+                              {allowedTaskTypes.map((taskType) => (
+                                <option key={taskType} value={taskType}>
+                                  {taskType === 'CALL' ? 'Appel' : taskType === 'EMAIL' ? 'E-mail' : taskType === 'MEETING' ? 'Reunion' : 'Autre tache'}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Priorite</label>
+                            <select value={newTaskPriority} onChange={(e) => setNewTaskPriority(e.target.value as TaskPriority)}>
+                              {taskPriorities.map((priority) => (
+                                <option key={priority} value={priority}>{priority}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Echeance</label>
+                            <input type="datetime-local" value={newTaskDueDate} onChange={(e) => setNewTaskDueDate(e.target.value)} />
+                          </div>
+
+                          <div className="form-group">
+                            <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>Progression (0-100)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={newTaskProgress}
+                              onChange={(e) => setNewTaskProgress(Math.max(0, Math.min(100, Number(e.target.value))))}
+                            />
+                          </div>
+
+                          {canAssignTaskToOthers && (
+                            <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                              <label className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase' }}>
+                                {isExecutive ? 'Commercial assigne' : 'Assigne a'}
+                              </label>
+                              <select value={newTaskAssignedToId} onChange={(e) => setNewTaskAssignedToId(e.target.value)}>
+                                <option value="">{isExecutive ? 'Choisir un sales' : 'Non assigne'}</option>
+                                {assignableUsers.map((u) => (
+                                  <option key={u.id} value={u.id}>
+                                    {`${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email} ({u.role})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          <div style={{ gridColumn: 'span 2', display: 'flex', gap: '1rem', marginTop: '0.75rem' }}>
+                            <button type="submit" className="primary" style={{ flex: 1 }}>Creer la tache</button>
+                            <button type="button" className="secondary" style={{ flex: 1 }} onClick={() => setIsTaskCreateModalOpen(false)}>Annuler</button>
                           </div>
                         </form>
                       </motion.div>
@@ -900,6 +1231,72 @@ export function LeadsPage() {
                     ))}
                   </div>
 
+                  <div style={{ marginBottom: '2.5rem', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', padding: '1.25rem', background: 'rgba(30, 41, 59, 0.35)' }}>
+                    <div className="flex-between" style={{ marginBottom: '1rem', gap: '1rem', alignItems: 'center' }}>
+                      <div className="flex-center" style={{ gap: '0.5rem', fontWeight: 800 }}>
+                        <BrainCircuit size={16} /> Prédiction IA
+                      </div>
+                      {leadPrediction && (
+                        <span
+                          className="badge"
+                          style={predictionBadgeStyle(leadPrediction.label)}
+                        >
+                          {leadPrediction.label}
+                        </span>
+                      )}
+                    </div>
+
+                    {loadingLeadPrediction ? (
+                      <div className="flex-center" style={{ padding: '1.5rem', justifyContent: 'center' }}>
+                        <RefreshCw size={24} className="animate-spin text-muted" />
+                      </div>
+                    ) : leadPrediction ? (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                          <div style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '1rem', background: 'rgba(15, 23, 42, 0.45)' }}>
+                            <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                              Score global
+                            </div>
+                            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                              {leadPrediction.score.toFixed(1)}/100
+                            </div>
+                          </div>
+
+                          <div style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '1rem', background: 'rgba(15, 23, 42, 0.45)' }}>
+                            <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                              Probabilité
+                            </div>
+                            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                              {(leadPrediction.probability * 100).toFixed(1)}%
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ width: '100%', height: '10px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.08)' }}>
+                          <div
+                            style={{
+                              width: `${Math.max(0, Math.min(100, leadPrediction.score))}%`,
+                              height: '100%',
+                              borderRadius: '999px',
+                              background:
+                                leadPrediction.label === 'Élevée'
+                                  ? 'linear-gradient(90deg, #10B981, #34D399)'
+                                  : leadPrediction.label === 'Moyenne'
+                                    ? 'linear-gradient(90deg, #F59E0B, #FBBF24)'
+                                    : 'linear-gradient(90deg, #EF4444, #F87171)',
+                            }}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ padding: '1rem', border: '1px dashed var(--glass-border)', borderRadius: '12px' }}>
+                        <p className="text-muted small" style={{ margin: 0 }}>
+                          {leadPredictionError ?? 'Prédiction IA indisponible pour ce lead.'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
                   <div style={{ marginBottom: '2.5rem' }}>
                     <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
                       <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Tâches</h4>
@@ -907,31 +1304,18 @@ export function LeadsPage() {
                     </div>
 
                     {canAddTask && !selectedLead.isAnonymized ? (
-                      <form onSubmit={onCreateTask} style={{ marginBottom: '1.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                        <input
-                          placeholder="Nouvelle tâche..."
-                          value={newTaskTitle}
-                          onChange={(e) => setNewTaskTitle(e.target.value)}
-                          required
-                          style={{ gridColumn: 'span 2', background: 'rgba(15, 23, 42, 0.4)', border: '1px solid var(--glass-border)' }}
-                        />
-                        <input
-                          type="datetime-local"
-                          value={newTaskDueDate}
-                          onChange={(e) => setNewTaskDueDate(e.target.value)}
-                          style={{ background: 'rgba(15, 23, 42, 0.4)', border: '1px solid var(--glass-border)' }}
-                        />
-                        <button type="submit" className="primary small" style={{ padding: '0.4rem 0.8rem' }}>
-                          <Plus size={14} /> Ajouter
+                      <div style={{ marginBottom: '1.5rem' }}>
+                        <button type="button" className="primary small" onClick={openTaskCreateModal} style={{ padding: '0.55rem 0.95rem' }}>
+                          <Plus size={14} /> Nouvelle tâche
                         </button>
-                      </form>
-                    ) : (
+                      </div>
+                    ) : selectedLead.isAnonymized ? (
                       <div style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)' }}>
                         <p className="text-muted small" style={{ margin: 0 }}>
-                          {selectedLead.isAnonymized ? 'Lead archivé : tâches désactivées.' : 'Accès en lecture seule aux tâches.'}
+                          Ce lead est archive. La gestion des taches est indisponible.
                         </p>
                       </div>
-                    )}
+                    ) : null}
 
                     <div className="interactions-list">
                       {loadingTasks ? (
@@ -953,8 +1337,8 @@ export function LeadsPage() {
                               className="interaction-item"
                             >
                               <div className="flex-between" style={{ marginBottom: '0.5rem' }}>
-                                <span className={`badge ${t.type === 'MARKETING' ? 'badge-orange' : 'badge-blue'}`} style={{ fontSize: '0.6rem' }}>
-                                  {t.type}
+                                <span className="badge badge-blue" style={{ fontSize: '0.6rem' }}>
+                                  {t.type === 'CALL' ? 'Appel' : t.type === 'EMAIL' ? 'E-mail' : t.type === 'MEETING' ? 'Reunion' : 'Autre tache'}
                                 </span>
                                 <div className="flex-center" style={{ gap: '0.5rem' }}>
                                   <span className={`badge ${
@@ -1029,13 +1413,13 @@ export function LeadsPage() {
                           </div>
                         </div>
                       </form>
-                    ) : (
+                    ) : selectedLead.isAnonymized ? (
                       <div style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)' }}>
                         <p className="text-muted small" style={{ margin: 0 }}>
-                          {selectedLead.isAnonymized ? 'Lead archivé : interactions désactivées.' : 'Accès en lecture seule aux interactions.'}
+                          Ce lead est archive. La gestion des interactions est indisponible.
                         </p>
                       </div>
-                    )}
+                    ) : null}
 
                     <div className="interactions-list">
                       {loadingInteractions ? (
@@ -1063,6 +1447,50 @@ export function LeadsPage() {
                       {interactions.length === 0 && !loadingInteractions && (
                         <div style={{ textAlign: 'center', padding: '2rem', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)' }}>
                           <p className="text-muted small">Aucun historique pour le moment.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', padding: '1.25rem', background: 'rgba(30, 41, 59, 0.35)' }}>
+                    <div className="flex-between" style={{ marginBottom: '1rem' }}>
+                      <div className="flex-center" style={{ gap: '0.5rem', fontWeight: 800 }}>
+                        <Activity size={16} /> Historique des modifications
+                      </div>
+                      <span className="badge badge-blue">{leadActivityLogs.length}</span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {loadingLeadActivity ? (
+                        <div className="flex-center" style={{ padding: '1.5rem', justifyContent: 'center' }}>
+                          <RefreshCw size={24} className="animate-spin text-muted" />
+                        </div>
+                      ) : (
+                        leadActivityLogs.map((log) => (
+                          <div key={log.id} style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '0.85rem', background: 'rgba(15, 23, 42, 0.5)' }}>
+                            <div style={{ fontWeight: 800, fontSize: '0.9rem' }}>{leadActivityLabel(log)}</div>
+                            <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
+                              {log.user ? `${log.user.firstName ?? ''} ${log.user.lastName ?? ''}`.trim() || log.user.email : '—'} • {formatDateTime(log.createdAt)}
+                            </div>
+                            {leadActivityChanges(log).length > 0 && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginTop: '0.75rem' }}>
+                                {leadActivityChanges(log).map((change) => (
+                                  <div key={`${log.id}-${change.key}`} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+                                    <span style={{ color: 'var(--text-main)', fontWeight: 700 }}>{change.key}</span>
+                                    {' : '}
+                                    <span>{formatAuditValue(change.previous)}</span>
+                                    {' -> '}
+                                    <span style={{ color: 'var(--text-main)' }}>{formatAuditValue(change.current)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                      {!loadingLeadActivity && leadActivityLogs.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '1.25rem', border: '2px dashed var(--glass-border)', borderRadius: 'var(--radius-md)' }}>
+                          <p className="text-muted small" style={{ margin: 0 }}>Aucune modification enregistree pour ce lead.</p>
                         </div>
                       )}
                     </div>

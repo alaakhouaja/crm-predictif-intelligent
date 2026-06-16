@@ -79,23 +79,21 @@ export class TasksService {
     if (user.role === UserRole.ADMIN) {
       return Object.values(TaskType);
     }
+    if (user.role === UserRole.EXECUTIVE) {
+      return Object.values(TaskType);
+    }
     if (user.role === UserRole.SALES) {
-      return [
-        TaskType.SALES,
-        TaskType.CALL,
-        TaskType.MEETING,
-        TaskType.EMAIL_FOLLOW_UP,
-      ];
+      return Object.values(TaskType);
     }
     if (user.role === UserRole.MARKETING) {
-      return [TaskType.MARKETING, TaskType.EMAIL_FOLLOW_UP];
+      return Object.values(TaskType);
     }
     return [];
   }
 
   private normalizeType(user: AuthUser, requested?: TaskType): TaskType {
     const allowed = this.allowedTypes(user);
-    const fallback = allowed[0] ?? TaskType.SALES;
+    const fallback = allowed[0] ?? TaskType.TODO;
     const t = requested ?? fallback;
     if (user.role !== UserRole.ADMIN && !allowed.includes(t)) {
       throw new ForbiddenException('Task type not allowed for this role');
@@ -115,12 +113,24 @@ export class TasksService {
     }
   }
 
+  private async assertSalesAssignee(assignedToId: string) {
+    const assignee = await this.prisma.user.findUnique({
+      where: { id: assignedToId },
+      select: { id: true, role: true },
+    });
+    if (!assignee) {
+      throw new NotFoundException('User not found');
+    }
+    if (assignee.role !== UserRole.SALES) {
+      throw new ForbiddenException('Tasks can only be assigned to sales users');
+    }
+  }
+
   private canReadTask(user: AuthUser, task: { type: TaskType; assignedToId: string | null; createdById: string; lead?: { ownerId: string } | null }) {
     if (this.canReadAll(user)) return true;
 
     if (user.role === UserRole.MARKETING) {
       return (
-        task.type === TaskType.MARKETING ||
         task.assignedToId === user.id ||
         task.createdById === user.id
       );
@@ -135,10 +145,19 @@ export class TasksService {
 
   async create(user: AuthUser, dto: CreateTaskDto) {
     const type = this.normalizeType(user, dto.type);
-    const assignedToId = dto.assignedToId ?? user.id;
+    const assignedToId = dto.assignedToId ?? (user.role === UserRole.SALES ? user.id : null);
 
-    if (assignedToId !== user.id && user.role !== UserRole.ADMIN) {
+    if (
+      assignedToId &&
+      assignedToId !== user.id &&
+      user.role !== UserRole.ADMIN &&
+      user.role !== UserRole.EXECUTIVE
+    ) {
       throw new ForbiddenException('Only admin can assign tasks to someone else');
+    }
+
+    if (assignedToId && assignedToId !== user.id) {
+      await this.assertSalesAssignee(assignedToId);
     }
 
     if (dto.leadId) {
@@ -280,6 +299,10 @@ export class TasksService {
       user.role !== UserRole.ADMIN
     ) {
       throw new ForbiddenException('Only admin can re-assign tasks');
+    }
+
+    if (dto.assignedToId) {
+      await this.assertSalesAssignee(dto.assignedToId);
     }
 
     const type = dto.type ? this.normalizeType(user, dto.type) : undefined;
@@ -617,7 +640,6 @@ export class TasksService {
       if (user.role === UserRole.MARKETING) {
         and.push({
           OR: [
-            { type: TaskType.MARKETING },
             { assignedToId: user.id },
             { createdById: user.id },
           ],

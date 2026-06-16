@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'framer-motion';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -7,6 +7,7 @@ export function SettingsPage() {
   const { user, refreshMe, logout } = useAuth();
   const [firstName, setFirstName] = useState(user?.firstName ?? '');
   const [lastName, setLastName] = useState(user?.lastName ?? '');
+  const [phone, setPhone] = useState(user?.phone ?? '');
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
 
@@ -21,6 +22,12 @@ export function SettingsPage() {
     return n || user?.email || 'Utilisateur';
   }, [user?.email, user?.firstName, user?.lastName]);
 
+  useEffect(() => {
+    setFirstName(user?.firstName ?? '');
+    setLastName(user?.lastName ?? '');
+    setPhone(user?.phone ?? '');
+  }, [user?.firstName, user?.lastName, user?.phone]);
+
   async function onSaveProfile(e: FormEvent) {
     e.preventDefault();
     setProfileMessage(null);
@@ -29,8 +36,9 @@ export function SettingsPage() {
       await api('/auth/me', {
         method: 'PATCH',
         body: JSON.stringify({
-          firstName: firstName.trim() || null,
-          lastName: lastName.trim() || null,
+          firstName: firstName.trim() || undefined,
+          lastName: lastName.trim() || undefined,
+          phone: phone.trim(),
         }),
       });
       await refreshMe();
@@ -83,7 +91,7 @@ export function SettingsPage() {
         <div className="card">
           <h2 style={{ marginTop: 0 }}>Profil</h2>
           <p className="muted" style={{ marginTop: '0.25rem' }}>
-            Mettez à jour vos informations affichées dans l’application.
+            Mettez à jour vos informations personnelles.
           </p>
 
           <form onSubmit={onSaveProfile} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.25rem' }}>
@@ -99,6 +107,17 @@ export function SettingsPage() {
             <label style={{ gridColumn: '1 / -1' }}>
               Email
               <input value={user?.email ?? ''} disabled />
+            </label>
+
+            <label style={{ gridColumn: '1 / -1' }}>
+              Téléphone
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                autoComplete="tel"
+                placeholder="+33 6 12 34 56 78"
+              />
             </label>
 
             <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
@@ -151,9 +170,7 @@ export function SettingsPage() {
 
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Session</h2>
-            <p className="muted" style={{ marginTop: '0.25rem' }}>
-              Actions rapides pour votre compte.
-            </p>
+            <p className="muted" style={{ marginTop: '0.25rem' }}></p>
 
             <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1.25rem' }}>
               <div className="muted small">Compte : {displayName}</div>
