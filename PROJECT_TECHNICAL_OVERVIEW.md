@@ -1,1226 +1,1058 @@
-# Predictive CRM Project - Technical and Functional Overview
+# CRM Prédictif — Documentation Technique Complète
+> Projet de Fin d'Études (PFE) — Application CRM avec Intelligence Artificielle intégrée
 
-## 1. Project Summary
+---
 
-This project is a full-stack predictive CRM platform designed to centralize lead management, structure the commercial process, monitor sales activity, and progressively integrate artificial intelligence for lead scoring and conversion prediction.
+## Table des matières
 
-The application is organized into three major parts:
+1. [Présentation du projet](#1-présentation-du-projet)
+2. [Architecture globale](#2-architecture-globale)
+3. [Stack technologique](#3-stack-technologique)
+4. [Structure des répertoires](#4-structure-des-répertoires)
+5. [Base de données](#5-base-de-données)
+6. [Backend — API REST](#6-backend--api-rest)
+7. [Intégration Intelligence Artificielle](#7-intégration-intelligence-artificielle)
+8. [Notifications temps réel (WebSocket)](#8-notifications-temps-réel-websocket)
+9. [Interface Frontend](#9-interface-frontend)
+10. [Sécurité](#10-sécurité)
+11. [Fonctionnalités avancées](#11-fonctionnalités-avancées)
+12. [Configuration et déploiement](#12-configuration-et-déploiement)
+13. [Dépendances complètes](#13-dépendances-complètes)
 
-- a `frontend` web application built with React and Vite
-- a `backend` API built with NestJS and Prisma
-- an `ia` module built in Python for dataset export, model training, inference, and FastAPI exposure
+---
 
-The current system already supports the operational CRM core:
+## 1. Présentation du projet
 
-- authentication and user profile management
-- role-based access control
-- lead lifecycle management
-- pipeline visualization
-- task management
-- interaction tracking
-- notifications
-- dashboard and reporting
-- audit trail of modifications
-- AI prediction integration in the lead detail view
+### 1.1 Contexte
 
-The project is not only a CRUD CRM. It is structured around business workflows for sales teams, management, marketing teams, and AI-assisted prioritization.
+Le CRM Prédictif est une application web full-stack de gestion de la relation client (Customer Relationship Management) conçue pour les équipes commerciales. Elle intègre un moteur d'intelligence artificielle local (Ollama + Llama 3.1) pour scorer automatiquement les prospects et suggérer des actions commerciales adaptées.
 
-## 2. Global Objectives of the System
+### 1.2 Objectifs
 
-The platform addresses the following business goals:
+- **Centraliser** la gestion des prospects (leads) et des interactions commerciales
+- **Prédire** la probabilité de conversion de chaque prospect grâce à l'IA
+- **Automatiser** les suggestions de tâches commerciales
+- **Visualiser** les performances en temps réel via un dashboard analytique
+- **Notifier** les équipes en temps réel via WebSocket
 
-- centralize leads and commercial data in one system
-- assign leads to responsible users
-- structure the sales process with clear stages
-- track tasks and interactions around each lead
-- notify users about important events
-- provide dashboards and visibility on commercial activity
-- prepare and integrate predictive AI for conversion probability
-- secure access to data according to user role
+### 1.3 Utilisateurs cibles
 
-## 3. Repository Structure
+| Rôle | Description | Accès |
+|------|-------------|-------|
+| **ADMIN** | Administrateur système | Accès total |
+| **SALES** | Commercial | Ses leads uniquement |
+| **MARKETING** | Équipe marketing | Import/export leads |
+| **EXECUTIVE** | Direction | Vue analytique complète |
 
-```text
-CRM/
-|- backend/     NestJS API + Prisma + PostgreSQL access
-|- frontend/    React application
-|- ia/          Python AI pipeline and FastAPI service
-|- PROJECT_TECHNICAL_OVERVIEW.md
+### 1.4 Fonctionnalités principales
+
+- Gestion complète des prospects avec pipeline de vente en 6 étapes
+- Scoring IA automatique des leads via LLM local (Ollama)
+- Suggestions de tâches commerciales générées par l'IA
+- Vue Kanban drag-and-drop du pipeline
+- Import/Export CSV avec détection intelligente des doublons
+- Gestion des tâches avec pièces jointes, rappels, et progression
+- Journal d'audit complet des actions utilisateurs
+- Notifications temps réel via WebSocket
+- Dashboard analytique avec graphiques de tendance SVG
+- Templates de tâches prédéfinis
+- Actions en masse sur les leads
+
+---
+
+## 2. Architecture globale
+
+### 2.1 Schéma d'architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     CLIENT (Navigateur)                      │
+│                                                              │
+│   React 19 + TypeScript + Vite                              │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│   │Dashboard │  │  Leads   │  │  Tasks   │  │ Pipeline │  │
+│   └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
+│                                                              │
+│   HTTP/REST (fetch)          WebSocket (Socket.IO)          │
+└──────────────┬───────────────────────┬──────────────────────┘
+               │                       │
+               ▼                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    BACKEND (NestJS 10)                       │
+│                                                              │
+│  ┌───────┐ ┌───────┐ ┌─────────┐ ┌──────────┐ ┌────────┐  │
+│  │ Auth  │ │ Leads │ │  Tasks  │ │Dashboard │ │  IA    │  │
+│  └───────┘ └───────┘ └─────────┘ └──────────┘ └────────┘  │
+│  ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌────────────┐   │
+│  │  Users   │ │Interactions│ │Notifs    │ │   Audit    │   │
+│  └──────────┘ └───────────┘ └──────────┘ └────────────┘   │
+│                                                              │
+│  Guards: JWT + RBAC    Interceptors: Audit                   │
+│  Filters: GlobalException  Middleware: RequestId             │
+│  Rate Limiting: 100 req/min/IP                               │
+└───────────────────┬──────────────────┬──────────────────────┘
+                    │                  │
+          ┌─────────▼──────┐  ┌───────▼──────────┐
+          │   PostgreSQL    │  │   Ollama (Local)  │
+          │   (Prisma ORM)  │  │   llama3.1 LLM   │
+          └────────────────┘  └──────────────────┘
 ```
 
-### `backend/`
-
-Contains the business API, security, database access, dashboard logic, file upload, notifications, and role-aware business rules.
-
-### `frontend/`
-
-Contains all user interfaces: login, dashboard, leads, pipeline, tasks, profile, settings, and user management.
-
-### `ia/`
-
-Contains the machine learning workflow:
-
-- data extraction from PostgreSQL
-- dataset generation
-- CatBoost training
-- threshold optimization
-- prediction CLI
-- FastAPI microservice for inference
-
-## 4. Main Technologies Used
-
-## 4.1 Frontend Technologies
-
-- React 19
-- TypeScript
-- Vite
-- React Router
-- `@hello-pangea/dnd` for drag and drop in the pipeline
-- `framer-motion` for motion and interface transitions
-- `lucide-react` for icons
-- `socket.io-client` for live notifications
-
-## 4.2 Backend Technologies
-
-- NestJS 10
-- TypeScript
-- Prisma ORM
-- PostgreSQL
-- JWT authentication with Passport
-- class-validator and class-transformer for DTO validation
-- Multer for file upload
-- Socket.IO for notifications
-- Swagger for API documentation in non-production mode
-
-## 4.3 AI Technologies
-
-- Python 3
-- pandas
-- CatBoost
-- scikit-learn
-- FastAPI
-- Uvicorn
-- psycopg2 or PostgreSQL connection through parsed `DATABASE_URL`
-
-## 4.4 Infrastructure and Runtime
-
-- PostgreSQL database
-- Docker Compose available in backend for local database bootstrapping
-- HTTP communication between React, NestJS, and FastAPI
-- WebSocket communication for real-time notifications
-
-## 5. Main Actors of the System
-
-The application is designed around several actors.
-
-### 5.1 Administrator
-
-Main responsibilities:
-
-- manage users
-- view all leads
-- create, update, archive, unarchive, and delete leads
-- manage tasks globally
-- access all dashboard data
-- export AI data
-- supervise the whole system
-
-### 5.2 Sales User
-
-Main responsibilities:
-
-- work on personally assigned leads
-- update owned leads
-- move owned leads in the pipeline
-- add interactions on owned leads
-- manage relevant tasks
-- view lead prediction in the lead detail
-- follow dashboard and operational activity
-
-### 5.3 Marketing User
-
-Main responsibilities:
-
-- create new leads
-- import leads from CSV
-- manage lead acquisition sources
-- create tasks related to leads
-- consult commercial data allowed by role
-
-### 5.4 Executive User
-
-Main responsibilities:
-
-- consult dashboards and global commercial data
-- view the pipeline in read-only mode
-- create and assign tasks for sales users
-- export AI data
-- follow performance without full admin powers
-
-### 5.5 External System
-
-This actor represents integrations or inbound capture mechanisms.
-
-Main responsibilities:
-
-- send leads to the CRM through the webhook endpoint
-
-### 5.6 AI Service
-
-This is an internal technical actor rather than a human actor.
-
-Main responsibilities:
-
-- receive features for a lead
-- compute conversion probability
-- return score and qualitative label
-
-## 6. Roles and Access Control
-
-The system enforces access control at several levels:
-
-- route level in the frontend
-- controller level in the backend
-- service level in the backend
-- data filtering according to lead owner or task assignee
-
-### 6.1 Supported Roles
-
-- `ADMIN`
-- `SALES`
-- `MARKETING`
-- `EXECUTIVE`
-
-### 6.2 Access Matrix Overview
-
-| Area | ADMIN | SALES | MARKETING | EXECUTIVE |
-|---|---|---|---|---|
-| Login and profile | Yes | Yes | Yes | Yes |
-| Dashboard | Yes | Yes | Yes | Yes |
-| Leads page | Yes | Yes | Yes | Yes |
-| Pipeline view | Yes | Yes | No | Yes, read-only |
-| Tasks page | Yes | Yes | Yes | Yes |
-| Users management | Yes | No | No | Read list only for assignment support |
-| Lead import CSV | Yes | No | Yes | No |
-| Lead export AI | Yes | Yes, only own leads | No | Yes |
-| Delete lead | Yes | No | No | No |
-| Archive and unarchive lead | Yes | No | No | No |
-| Assign task to other users | Yes | No | No | Yes |
-| Create task for sales | Yes | Limited | Limited | Yes |
-
-### 6.3 Role-Aware Data Filtering
-
-Important business filtering rules include:
-
-- sales users mainly see their own assigned leads in backend filtering
-- executives can access management views but are intentionally limited on direct operational editing in some areas
-- AI export is restricted so sales users can only export their own assigned leads
-- task assignment is restricted to users with role `SALES`
-
-## 7. Core Business Entities
-
-The database schema is centered around operational CRM data.
-
-### 7.1 User
-
-Represents an authenticated application user.
-
-Key fields:
-
-- `id`
-- `email`
-- `passwordHash`
-- `firstName`
-- `lastName`
-- `phone`
-- `role`
-- `profilePhotoPath`
-- `createdAt`
-- `updatedAt`
-
-### 7.2 Lead
-
-Represents a prospect in the sales process.
-
-Key fields:
-
-- `id`
-- `firstName`
-- `lastName`
-- `email`
-- `phone`
-- `company`
-- `source`
-- `stage`
-- `score`
-- `conversionProbability`
-- `notes`
-- `ownerId`
-- `consentDate`
-- `dataOrigin`
-- `isAnonymized`
-- `createdAt`
-- `updatedAt`
-
-### 7.3 Interaction
-
-Represents a commercial interaction linked to a lead.
-
-Key fields:
-
-- `id`
-- `type`
-- `content`
-- `leadId`
-- `userId`
-- `createdAt`
-
-### 7.4 Task
-
-Represents a commercial action or follow-up item.
-
-Key fields:
-
-- `id`
-- `title`
-- `description`
-- `type`
-- `status`
-- `priority`
-- `progress`
-- `dueDate`
-- `completedAt`
-- `leadId`
-- `assignedToId`
-- `createdById`
-- `overdueNotifiedAt`
-- `reminderNotifiedAt`
-- `createdAt`
-- `updatedAt`
-
-### 7.5 TaskAttachment
-
-Represents a file uploaded to a task.
-
-Key fields:
-
-- `id`
-- `taskId`
-- `uploadedById`
-- `originalName`
-- `mimeType`
-- `size`
-- `storagePath`
-- `createdAt`
-
-### 7.6 AuditLog
-
-Represents traceability of modifications.
-
-Key fields:
-
-- `id`
-- `userId`
-- `action`
-- `entityType`
-- `entityId`
-- `oldValue`
-- `newValue`
-- `createdAt`
-
-### 7.7 Notification
-
-Represents a user notification.
-
-Key fields:
-
-- `id`
-- `userId`
-- `title`
-- `content`
-- `read`
-- `createdAt`
-
-## 8. Business Enums and Workflow States
-
-### 8.1 Lead Stages
-
-The lead pipeline is localized in French:
-
-- `Nouveau`
-- `Contacte`
-- `Qualifie`
-- `Proposition`
-- `Gagne`
-- `Perdu`
-
-These stages are used consistently in backend storage and frontend display.
-
-### 8.2 Interaction Types
-
-- `EMAIL`
-- `CALL`
-- `MEETING`
-- `NOTE`
-
-### 8.3 Task Types
-
-The task model was explicitly changed so that task type represents a commercial action instead of a role:
-
-- `CALL`
-- `EMAIL`
-- `MEETING`
-- `TODO`
-
-### 8.4 Task Status
-
-- `OPEN`
-- `IN_PROGRESS`
-- `DONE`
-- `CANCELED`
-
-### 8.5 Task Priority
-
-- `LOW`
-- `MEDIUM`
-- `HIGH`
-
-## 9. Backend Architecture
-
-The backend follows a modular NestJS architecture with a clear separation of concerns.
-
-### 9.1 Global Backend Components
-
-- `main.ts` bootstraps the app, enables CORS, validation, filters, Swagger, and global interceptors
-- `app.module.ts` imports all functional modules
-- `PrismaModule` and `PrismaService` centralize database access
-- global exception filter hides technical details from end users
-- request ID middleware adds traceability to requests
-- audit interceptor logs write operations
-
-### 9.2 Backend Modules
-
-- `AuthModule`
-- `LeadsModule`
-- `InteractionsModule`
-- `TasksModule`
-- `NotificationsModule`
-- `UsersModule`
-- `DashboardModule`
-- `IaService` used by leads
-
-## 10. Backend Functionalities by Module
-
-## 10.1 Authentication Module
-
-### Main functionalities
-
-- bootstrap first admin account when no user exists
-- login with JWT
-- logout
-- admin registration of users
-- current user profile retrieval
-- current user profile update
-- current user profile photo upload
-- current user profile photo retrieval
-- password change
-
-### Security characteristics
-
-- password hashing with bcrypt
-- JWT accepted from bearer token or HTTP-only cookie
-- invalid credentials hidden behind generic error
-- DTO validation on inputs
-
-### Endpoints
-
-| Method | Endpoint | Purpose | Main Access |
-|---|---|---|---|
-| POST | `/auth/bootstrap` | Create first admin if system is empty | Public, guarded by empty-system logic |
-| POST | `/auth/login` | Login and issue JWT | Public |
-| POST | `/auth/logout` | Logout and clear cookie | Authenticated |
-| POST | `/auth/register` | Create a user | ADMIN |
-| GET | `/auth/me` | Get current user | Authenticated |
-| PATCH | `/auth/me` | Update current user profile | Authenticated |
-| POST | `/auth/me/photo` | Upload current user profile photo | Authenticated |
-| GET | `/auth/me/photo` | Read current user profile photo file | Authenticated |
-| POST | `/auth/change-password` | Change password | Authenticated |
-
-## 10.2 Leads Module
-
-This is the central business module of the application.
-
-### Main functionalities
-
-- create leads
-- list leads with pagination and search
-- filter visibility according to role
-- update lead information
-- change lead stage
-- archive and unarchive leads
-- delete leads
-- import leads from CSV
-- ignore duplicates during CSV import by email or phone
-- return import summary with added, existing, and error counts
-- create notifications on important events
-- receive leads from a protected webhook
-- export AI dataset
-- expose lead activity timeline
-- expose lead AI prediction
-- keep audit trail of modifications
-
-### Important business rules
-
-- `limit` in lead pagination is capped to `100` to avoid abuse
-- duplicate CSV entries are ignored instead of overwriting existing leads
-- some actions are restricted to lead owner or admin
-- archived leads are logically anonymized through `isAnonymized`
-- sales AI export is restricted to their own leads
-
-### Endpoints
-
-| Method | Endpoint | Purpose | Main Access |
-|---|---|---|---|
-| GET | `/leads` | Paginated lead listing | Authenticated, filtered by role |
-| POST | `/leads` | Create a lead | ADMIN, SALES, MARKETING |
-| GET | `/leads/:id` | Get one lead | Authenticated with service-level access control |
-| PATCH | `/leads/:id` | Update lead | Role-aware, owner-aware |
-| DELETE | `/leads/:id` | Delete lead | ADMIN |
-| POST | `/leads/import` | Import CSV file | ADMIN, MARKETING |
-| POST | `/leads/webhook` | Create lead from external system | Webhook secret required |
-| POST | `/leads/:id/archive` | Archive lead | ADMIN |
-| POST | `/leads/:id/unarchive` | Restore archived lead | ADMIN |
-| GET | `/leads/export-ai` | Export AI dataset | ADMIN, EXECUTIVE, SALES with filtering |
-| GET | `/leads/:id/activity` | Get audit history for one lead | Authenticated with access checks |
-| GET | `/leads/:id/prediction` | Get AI prediction for one lead | Authenticated with access checks |
-
-## 10.3 Interactions Module
-
-### Main functionalities
-
-- create interaction on a lead
-- list interactions with pagination and filtering
-- read one interaction
-- update one interaction
-- delete one interaction
-
-### Business rules
-
-- interactions are attached to leads
-- creation is limited mainly to operational roles
-- update and delete are controlled by creator or admin
-
-### Endpoints
-
-| Method | Endpoint | Purpose | Main Access |
-|---|---|---|---|
-| POST | `/interactions` | Create interaction | ADMIN, SALES |
-| GET | `/interactions` | List interactions | Authenticated with role filtering |
-| GET | `/interactions/:id` | Read one interaction | Authenticated with access checks |
-| PATCH | `/interactions/:id` | Update interaction | Creator or ADMIN |
-| DELETE | `/interactions/:id` | Delete interaction | Creator or ADMIN |
-
-## 10.4 Tasks Module
-
-### Main functionalities
-
-- create tasks
-- list tasks with filters, sorting, and pagination
-- get task statistics
-- read one task
-- update task
-- delete task
-- upload, list, download, and delete task attachments
-- expose task activity history
-- run background reminders for overdue and near-due tasks
-
-### Business rules
-
-- task types are `CALL`, `EMAIL`, `MEETING`, `TODO`
-- tasks can only be assigned to users with role `SALES`
-- executive users can create tasks for sales but are limited in later modification flows
-- access to tasks depends on creator, assignee, lead ownership, and admin privileges
-- uploads are restricted by MIME type and size
-
-### Endpoints
-
-| Method | Endpoint | Purpose | Main Access |
-|---|---|---|---|
-| POST | `/tasks` | Create task | ADMIN, SALES, MARKETING, EXECUTIVE |
-| GET | `/tasks` | List tasks | Authenticated with role filtering |
-| GET | `/tasks/stats` | Task KPI summary | Authenticated |
-| GET | `/tasks/:id` | Get one task | Authenticated with access checks |
-| PATCH | `/tasks/:id` | Update task | Role-aware, creator/assignee/admin logic |
-| DELETE | `/tasks/:id` | Delete task | Role-aware |
-| GET | `/tasks/:id/activity` | Get task audit/activity | Authenticated with access checks |
-| GET | `/tasks/:id/attachments` | List task attachments | Authenticated with access checks |
-| POST | `/tasks/:id/attachments` | Upload attachment | Role-aware |
-| DELETE | `/tasks/attachments/:attachmentId` | Delete attachment | Role-aware |
-| GET | `/tasks/attachments/:attachmentId/download` | Download attachment | Authenticated with path safety |
-
-## 10.5 Notifications Module
-
-### Main functionalities
-
-- list user notifications
-- mark notifications as read
-- send direct notifications
-- send broadcast notifications to the whole team
-- push notifications in real time through Socket.IO
-
-### Business rules
-
-- each user only reads and updates their own notifications
-- broadcast creation is done transactionally to avoid partial notification distribution
-
-### Endpoints
-
-| Method | Endpoint | Purpose | Main Access |
-|---|---|---|---|
-| GET | `/notifications` | List current user notifications | Authenticated |
-| PATCH | `/notifications/:id/read` | Mark notification as read | Authenticated owner |
-
-## 10.6 Users Module
-
-### Main functionalities
-
-- create users
-- list users
-- read user profile by id
-- update users
-- delete users
-
-### Business rules
-
-- management is reserved to admins
-- executives can read the list of users to support task assignment workflows
-
-### Endpoints
-
-| Method | Endpoint | Purpose | Main Access |
-|---|---|---|---|
-| POST | `/users` | Create user | ADMIN |
-| GET | `/users` | List users | ADMIN, EXECUTIVE |
-| GET | `/users/:id` | Read one user | ADMIN |
-| PATCH | `/users/:id` | Update user | ADMIN |
-| DELETE | `/users/:id` | Delete user | ADMIN |
-
-## 10.7 Dashboard Module
-
-### Main functionalities
-
-- global KPI overview
-- pipeline distribution
-- source distribution
-- performance by owner
-- trends over time
-- recent activity
-- conversion view by stage
-
-### Business rules
-
-- sales users see only their own business scope
-- other roles can access global aggregations
-- some heavy aggregations are pushed to the database using Prisma `groupBy`
-
-### Endpoints
-
-| Method | Endpoint | Purpose | Main Access |
-|---|---|---|---|
-| GET | `/dashboard/overview` | Main KPIs | Authenticated |
-| GET | `/dashboard/pipeline` | Leads by stage | Authenticated |
-| GET | `/dashboard/by-source` | Leads by source | Authenticated |
-| GET | `/dashboard/by-owner` | Performance by owner | Authenticated |
-| GET | `/dashboard/trends` | Time-based trend data | Authenticated |
-| GET | `/dashboard/activity` | Recent activity | Authenticated |
-| GET | `/dashboard/stage-conversion` | Stage conversion view | Authenticated |
-
-## 10.8 Health Endpoint
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/health` | Simple backend health check |
-
-## 11. Frontend Architecture and Interfaces
-
-The frontend is a React single-page application using route protection, a shared API client, and a shared auth context.
-
-### Core frontend architecture
-
-- `AuthContext` stores the logged-in user and session state
-- `client.ts` centralizes HTTP requests and error handling
-- `App.tsx` defines protected routes and route-level role restrictions
-- `AppLayout.tsx` provides sidebar, top bar, search, and navigation shell
-- `NotificationBell.tsx` provides API plus WebSocket notification UI
-- `ToastProvider.tsx` provides modern in-app notifications instead of browser alerts
-- `ErrorBoundary.tsx`, `AppErrorPage.tsx`, and `NotFoundPage.tsx` provide professional error handling
-
-## 12. Main UI Interfaces Developed
-
-## 12.1 Login Interface
-
-Main interface elements:
-
-- email input
-- password input
-- authentication error display
-- loading state
-
-Main purpose:
-
-- allow authenticated access to the CRM
-
-## 12.2 Dashboard Interface
-
-Main interface elements:
-
-- KPI cards
-- stage distribution
-- leads by source
-- performance by owner
-- recent activity
-- refresh action
-
-Main purpose:
-
-- provide a management and monitoring entry point for the application
-
-## 12.3 Leads Interface
-
-This is one of the richest interfaces in the project.
-
-Main interface elements:
-
-- leads table
-- search bar
-- pagination
-- create lead modal
-- edit lead modal
-- CSV import action
-- AI export action
-- archive and delete actions according to role
-- lead side panel
-- task creation modal inside lead detail
-- interactions section
-- audit history section
-- AI prediction block
-
-Main purpose:
-
-- central operational screen for lead handling
-
-## 12.4 Pipeline Interface
-
-Main interface elements:
-
-- Kanban columns by stage
-- drag and drop cards
-- score and probability display
-- filters
-- lead side panel
-
-Main purpose:
-
-- visualize the commercial pipeline and stage progression
-
-Important note:
-
-- executives have read-only access to the pipeline UI
-- drag and drop is restricted to authorized roles
-
-## 12.5 Tasks Interface
-
-Main interface elements:
-
-- task list view
-- task kanban view
-- task filters
-- task statistics
-- create modal
-- detail and edit modal
-- attachment upload and download
-- activity history
-
-Main purpose:
-
-- organize commercial actions and follow-up execution
-
-## 12.6 Users Interface
-
-Main interface elements:
-
-- users table
-- create user modal
-- edit user modal
-- delete action
-
-Main purpose:
-
-- provide user administration for admins
-
-## 12.7 Profile Interface
-
-Main interface elements:
-
-- profile avatar
-- upload photo button
-- current user name
-- email
-- editable first name
-- editable last name
-- editable phone
-- role
-- profile update action
-- profile photo upload status feedback
-
-Main purpose:
-
-- display and edit current profile information without exposing forbidden internal identifiers
-
-## 12.8 Settings Interface
-
-Main interface elements:
-
-- update name fields
-- change password
-- logout
-
-Main purpose:
-
-- allow self-service profile and security updates
-
-## 12.9 Error Interfaces
-
-Main interface elements:
-
-- custom application error page
-- centered not-found page
-- graceful API failure behavior
-
-Main purpose:
-
-- replace framework default errors with professional UI
-
-## 13. Key Functionalities Already Implemented
-
-The codebase currently implements the following important business features.
-
-### 13.1 Authentication and Session
-
-- user login
-- JWT-based session
-- cookie and bearer token support
-- current profile retrieval
-- current profile edition
-- current profile photo upload
-- password change
-- logout
-
-### 13.2 Lead Management
-
-- create lead
-- update lead
-- delete lead
-- archive lead
-- unarchive lead
-- view lead detail
-- track lead owner
-- manage lead stage
-- protect archived leads
-
-### 13.3 Lead Import and Export
-
-- CSV import of leads
-- duplicate detection by email or phone
-- insert-only import strategy
-- summary of added, existing, and error records
-- team-wide notification after import
-- AI dataset export
-
-### 13.4 Pipeline Management
-
-- stage-based pipeline
-- drag and drop stage movement
-- pipeline filtering
-- show all leads according to backend visibility rules
-- stage naming aligned with the database
-
-### 13.5 Interaction Management
-
-- add interaction on a lead
-- classify interaction by type
-- list history of interactions
-- link interaction to author
-
-### 13.6 Task Management
-
-- create task from general task page
-- create task from lead side panel
-- assign tasks only to sales users
-- use commercial action types instead of role-like task types
-- update task status and progress
-- upload task attachments
-- download task attachments
-- reminders for overdue or upcoming tasks
-
-### 13.7 Notifications
-
-- in-app notification list
-- real-time notification reception
-- mark as read
-- broadcast team notifications
-
-### 13.8 Audit and Traceability
-
-- audit logging of write operations
-- lead history panel
-- task activity retrieval
-- request ID support for debugging
-
-### 13.9 Dashboard and Analytics
-
-- KPI overview
-- stage distribution
-- source distribution
-- owner performance
-- trends and activity timeline
-
-### 13.10 AI Prediction
-
-- export historical training dataset
-- train CatBoost model
-- optimize decision threshold
-- save model and reports
-- expose FastAPI `/predict`
-- backend feature engineering
-- show AI block in lead detail view
-
-## 14. AI Module Overview
-
-The AI module is already integrated as a separate technical subsystem.
-
-## 14.1 AI Pipeline Components
-
-### `export_leads.py`
-
-Purpose:
-
-- connect to PostgreSQL
-- extract historical leads
-- aggregate features from leads, interactions, and tasks
-- build a supervised CSV dataset with target `converted`
-
-### `train_model.py`
-
-Purpose:
-
-- load dataset
-- prepare features
-- handle class imbalance using `class_weights`
-- train `CatBoostClassifier`
-- optimize threshold
-- compute metrics
-- save model and reports
-
-Outputs:
-
-- `ia/models/lead_conversion_catboost.cbm`
-- `ia/reports/training_metrics.json`
-- `ia/reports/feature_importance.csv`
-
-### `predict_lead.py`
-
-Purpose:
-
-- load model and training report
-- accept lead features
-- compute probability
-- convert probability to score out of 100
-- generate qualitative label `Faible`, `Moyenne`, `Élevée`
-
-### `api.py`
-
-Purpose:
-
-- expose `GET /health`
-- expose `POST /predict`
-- load model once at startup
-- enable CORS
-- optionally protect access with API key
-
-## 14.2 AI Features Used
-
-Current model features include:
-
-- `source`
-- `has_company`
-- `owner_role`
-- `interaction_count`
-- `call_count`
-- `email_interaction_count`
-- `meeting_interaction_count`
-- `task_count`
-- `completed_task_count`
-- `open_task_count`
-- `overdue_task_count`
-- `call_task_count`
-- `email_task_count`
-- `meeting_task_count`
-- `todo_task_count`
-- `avg_task_progress`
-- `days_since_last_activity`
-- `days_since_creation`
-
-## 14.3 Current Model Metrics
-
-According to the current training report:
-
-- model type: `CatBoostClassifier`
-- train size: `218`
-- test size: `55`
-- class weights: `[1.0, 1.8312]`
-- best threshold: `0.0311`
-- accuracy: `0.7091`
-- precision: `0.5556`
-- recall: `1.0000`
-- F1-score: `0.7143`
-- ROC-AUC: `0.7936`
-
-Interpretation:
-
-- the model is already usable as a prototype decision support tool
-- recall is very strong, meaning the model catches all positives in the test split
-- precision is moderate, meaning false positives still exist
-- the threshold is currently very low, favoring sensitivity over strict precision
-
-## 14.4 Current AI Integration Path
-
-The runtime prediction chain is:
-
-`React -> NestJS -> FastAPI -> CatBoost model`
-
-Detailed flow:
-
-1. the user opens a lead detail in the React interface
-2. the frontend calls `GET /leads/:id/prediction`
-3. the NestJS backend loads the lead and derives business features
-4. the backend calls `POST http://localhost:8000/predict`
-5. FastAPI computes the result from the trained model
-6. the backend returns a simplified payload to the frontend
-7. the frontend displays score, probability, and label
-
-## 15. Security Measures Implemented
-
-Security is a major aspect of the project and is present in multiple layers.
-
-### 15.1 Authentication Security
-
-- JWT-based authentication
-- bearer token support
-- HTTP-only cookie support
-- bcrypt password hashing
-- protected endpoints with guards
-
-### 15.2 Authorization Security
-
-- role-based access control with decorators and guards
-- service-level ownership checks
-- restricted task assignment
-- restricted export visibility for AI dataset
-
-### 15.3 Input Validation
-
-- DTO validation with class-validator
-- global whitelist and forbidden non-whitelisted properties
-- transformed validated input types
-- bounded pagination limits
-
-### 15.4 Error Handling and Exposure Control
-
-- custom exception filter
-- no raw technical error pages exposed to end users
-- request IDs attached to error responses
-- professional frontend error pages
-
-### 15.5 File Upload Security
-
-- MIME type restrictions
-- file size limit
-- controlled task upload directory
-- controlled profile photo upload directory
-- path traversal protection on download
-
-### 15.6 Webhook Security
-
-- secret-based protection
-- secure comparison using `crypto.timingSafeEqual`
-
-### 15.7 Transactional Safety
-
-- notification broadcast creation grouped in Prisma transaction
-- protects against partial delivery in database writes
-
-### 15.8 Data Protection Logic
-
-- logical anonymization for archived leads
-- role-aware data access restrictions
-- hidden profile internal identifier in the profile UI
-
-## 16. Real-Time and Background Processes
-
-The application is not limited to request-response behavior.
-
-### Real-time notifications
-
-- Socket.IO gateway
-- authentication on websocket connection
-- user-specific rooms
-- immediate UI refresh in notification bell
-
-### Background reminders
-
-- periodic task reminder runner
-- overdue task detection
-- near-due task detection
-- notification creation for responsible users
-
-## 17. API Communication Model
-
-### Frontend to Backend
-
-The frontend always communicates with the NestJS API through a shared `fetch` wrapper.
-
-Main characteristics:
-
-- JSON-oriented communication
-- unified `ApiError`
-- credentials sent with requests
-- shared base URL configuration
-
-### Backend to Database
-
-The backend uses Prisma to communicate with PostgreSQL.
-
-Main characteristics:
-
-- typed queries
-- relation loading
-- aggregation queries
-- transaction support
-
-### Backend to AI Service
-
-The backend calls FastAPI with HTTP POST.
-
-Main characteristics:
-
-- timeout control
-- optional API key
-- normalized AI response contract
-- graceful failure through service unavailability errors
-
-### Backend to Frontend via WebSocket
-
-Notifications are pushed in real time using Socket.IO.
-
-## 18. Main User Interfaces and Business Workflows
-
-Several cross-cutting workflows are already implemented.
-
-### 18.1 Lead Creation Workflow
-
-1. user opens lead creation form
-2. frontend submits lead data
-3. backend validates DTO
-4. backend creates lead in database
-5. lead becomes available in list and pipeline depending on role
-
-### 18.2 CSV Import Workflow
-
-1. marketing or admin uploads CSV
-2. backend parses each row
-3. backend checks whether email or phone already exists
-4. existing records are ignored
-5. new records are inserted
-6. summary is returned
-7. team notification is created
-
-### 18.3 Lead Update Workflow
-
-1. authorized user edits lead
-2. backend validates access and changes
-3. audit information is recorded
-4. frontend refreshes detail panel and history
-
-### 18.4 Task Creation Workflow
-
-1. user opens task form
-2. user selects type, due date, lead, and assignee
-3. backend verifies business rules
-4. assignee must be a sales user
-5. task is created and becomes visible in task views
-
-### 18.5 AI Prediction Workflow
-
-1. user opens lead detail
-2. frontend requests prediction from backend
-3. backend computes features from current lead state
-4. backend calls FastAPI model
-5. frontend displays probability, score, and label
-
-## 19. Strengths of the Current Implementation
-
-The current codebase already demonstrates several strong engineering qualities.
-
-- clean separation between frontend, backend, and AI
-- real role-based restrictions beyond simple UI hiding
-- audit and traceability support
-- professional error handling
-- bounded pagination and safer server behavior
-- secure webhook secret comparison
-- transactional notification broadcast
-- background reminder processing
-- AI integration already connected to the CRM UI
-
-## 20. Current Limitations and Ongoing Nature of the Project
-
-Since the project is still evolving, some elements should be presented as current implementation status rather than final production maturity.
-
-Important current-state observations:
-
-- the AI model is already integrated but should still be improved for precision and threshold tuning
-- some AI-related export contracts may still require harmonization between frontend expectations and backend payload shape
-- the pipeline currently mixes stored lead fields and live AI prediction concepts, which may evolve further
-- the project is functional and advanced, but still open to iterative optimization
-
-## 21. Suggested Academic Positioning
-
-For an academic report, this project can be positioned as:
-
-- a predictive CRM platform with role-based business workflows
-- a web information system combining operational CRM and machine learning
-- a progressive architecture where AI is introduced as a decision-support layer on top of an existing CRM core
-
-## 22. Conclusion
-
-This project is a complete and evolving predictive CRM platform that already covers the essential operational needs of lead management, sales pipeline control, tasks, interactions, notifications, dashboards, role-based access, auditability, and AI-assisted lead prediction.
-
-Its architecture is modular and coherent:
-
-- React handles the user experience
-- NestJS enforces business rules and security
-- Prisma structures database access
-- PostgreSQL stores operational CRM data
-- Python and FastAPI provide predictive intelligence
-
-From a technical and academic perspective, the project is rich because it combines:
-
-- full-stack web engineering
-- secure API design
-- role-based business logic
-- real-time communication
-- file management
-- auditability
-- data preparation and machine learning integration
-
-This makes it a strong foundation both for continued development and for academic reporting.
+### 2.2 Pattern architectural
+
+- **Backend** : Architecture modulaire NestJS (Module / Controller / Service)
+- **Frontend** : Architecture par pages avec contexte React (AuthContext)
+- **Communication** : REST API + WebSocket bidirectionnel
+- **Persistance** : PostgreSQL via Prisma ORM (migrations versionnées)
+- **IA** : LLM local via Ollama (aucune dépendance cloud)
+
+### 2.3 Flux de données principal
+
+```
+Utilisateur → Action Frontend
+    → API REST (JWT auth)
+    → Guard (rôle vérifié)
+    → Service (logique métier)
+    → Prisma (base de données)
+    → AuditLog (journalisation)
+    → WebSocket (notification temps réel)
+    → Réponse JSON
+```
+
+---
+
+## 3. Stack technologique
+
+### 3.1 Backend
+
+| Technologie | Version | Rôle |
+|-------------|---------|------|
+| **NestJS** | 10.x | Framework Node.js modulaire |
+| **TypeScript** | 5.1.x | Langage typé |
+| **PostgreSQL** | 14+ | Base de données relationnelle |
+| **Prisma ORM** | 5.22.x | ORM avec migrations |
+| **Passport.js + JWT** | — | Authentification |
+| **Socket.IO** | 4.8.x | WebSocket temps réel |
+| **Multer** | 2.1.x | Upload de fichiers |
+| **Swagger/OpenAPI** | 7.4.x | Documentation API |
+| **@nestjs/throttler** | 6.5.x | Rate limiting (100 req/min/IP) |
+| **bcrypt** | 6.x | Hachage mots de passe |
+| **csv-parser** | 3.2.x | Import CSV |
+| **class-validator** | 0.14.x | Validation des DTOs |
+
+### 3.2 Frontend
+
+| Technologie | Version | Rôle |
+|-------------|---------|------|
+| **React** | 19.2.x | Bibliothèque UI |
+| **TypeScript** | 5.9.x | Langage typé |
+| **Vite** | 8.x | Build tool ultra-rapide |
+| **React Router DOM** | 7.13.x | Routage client-side |
+| **Framer Motion** | 12.38.x | Animations fluides |
+| **Lucide React** | 1.7.x | Bibliothèque d'icônes |
+| **@hello-pangea/dnd** | 18.x | Drag & Drop (Kanban) |
+| **Socket.IO Client** | 4.8.x | Client WebSocket |
+
+### 3.3 Intelligence Artificielle
+
+| Technologie | Rôle |
+|-------------|------|
+| **Ollama** | Serveur LLM local (localhost:11434) |
+| **Llama 3.1 (8B)** | Modèle de langage pour le scoring |
+| **Cache mémoire** | TTL 20 min, max 500 entrées |
+
+---
+
+## 4. Structure des répertoires
+
+### 4.1 Backend (`/backend/src`)
+
+```
+backend/src/
+├── auth/                          # Module d'authentification
+│   ├── decorators/
+│   │   ├── roles.decorator.ts     # Décorateur @Roles(...)
+│   │   └── current-user.decorator.ts
+│   ├── dto/
+│   │   ├── login.dto.ts
+│   │   ├── register.dto.ts
+│   │   └── me.dto.ts
+│   ├── guards/
+│   │   ├── jwt-auth.guard.ts
+│   │   └── roles.guard.ts
+│   ├── auth.controller.ts
+│   ├── auth.service.ts
+│   └── auth.module.ts
+├── leads/                         # Module prospects
+│   ├── dto/
+│   ├── leads.controller.ts
+│   ├── leads.service.ts           # Logique métier + déclenchement IA
+│   └── leads.module.ts
+├── tasks/                         # Module tâches
+│   ├── dto/
+│   ├── tasks.controller.ts
+│   ├── tasks.service.ts           # CRUD + notifications
+│   ├── tasks.reminders.runner.ts  # Job de rappels automatiques
+│   └── tasks.module.ts
+├── users/                         # Module utilisateurs
+│   ├── dto/
+│   ├── users.controller.ts
+│   ├── users.service.ts
+│   └── users.module.ts
+├── dashboard/                     # Module analytics
+│   ├── dashboard.controller.ts
+│   ├── dashboard.service.ts       # Agrégations + alertes
+│   └── dashboard.module.ts
+├── interactions/                  # Module interactions
+│   ├── dto/
+│   ├── interactions.controller.ts
+│   ├── interactions.service.ts
+│   └── interactions.module.ts
+├── notifications/                 # Module notifications
+│   ├── notifications.gateway.ts   # WebSocket Gateway
+│   ├── notifications.controller.ts
+│   ├── notifications.service.ts
+│   └── notifications.module.ts
+├── audit/                         # Module journal d'audit
+│   ├── audit.controller.ts
+│   ├── audit.service.ts
+│   └── audit.module.ts
+├── ia/                            # Module IA (Ollama)
+│   └── ia.service.ts             # Cache + Prompt + Parsing JSON
+├── common/                        # Code transversal
+│   ├── enums/user-role.enum.ts
+│   ├── filters/all-exceptions.filter.ts
+│   ├── interceptors/audit.interceptor.ts
+│   └── middleware/request-id.middleware.ts
+├── prisma/
+│   ├── prisma.service.ts
+│   └── prisma.module.ts
+├── app.module.ts                  # Module racine
+└── main.ts                        # Point d'entrée + Swagger + CORS
+```
+
+### 4.2 Frontend (`/frontend/src`)
+
+```
+frontend/src/
+├── pages/
+│   ├── LoginPage.tsx
+│   ├── DashboardPage.tsx          # Analytics + SVG charts
+│   ├── LeadsPage.tsx              # Page principale (1700+ lignes)
+│   ├── TasksPage.tsx              # Tâches + Kanban + Attachments
+│   ├── PipelineView.tsx           # Vue Kanban drag & drop
+│   ├── UsersPage.tsx              # Administration
+│   ├── ProfilePage.tsx
+│   ├── SettingsPage.tsx
+│   ├── AuditPage.tsx              # Journal audit (ADMIN)
+│   └── NotFoundPage.tsx
+├── components/
+│   ├── AppLayout.tsx              # Sidebar + Header + Navigation
+│   ├── ErrorBoundary.tsx
+│   ├── NotificationBell.tsx       # Cloche temps réel
+│   └── ToastProvider.tsx
+├── auth/
+│   └── AuthContext.tsx            # Contexte global (user + photoSrc)
+├── api/
+│   └── client.ts                  # Client HTTP avec JWT
+├── utils/
+│   ├── datetime.ts
+│   └── profilePhoto.ts
+├── types.ts                       # Interfaces TypeScript partagées
+├── App.tsx                        # Routeur + routes protégées
+└── App.css                        # Styles globaux (CSS variables)
+```
+
+---
+
+## 5. Base de données
+
+### 5.1 Schéma relationnel
+
+```
+User ──(owner)──── Lead
+ │                  │
+ ├── Interaction ───┘ (leadId)
+ ├── AuditLog
+ ├── Notification
+ └── Task ──(leadId)── Lead
+      └── TaskAttachment
+```
+
+### 5.2 Enums
+
+```prisma
+enum UserRole    { ADMIN | SALES | MARKETING | EXECUTIVE }
+enum LeadStage   { Nouveau | Contacte | Qualifie | Proposition | Gagne | Perdu }
+enum TaskType    { CALL | EMAIL | MEETING | TODO }
+enum TaskStatus  { OPEN | IN_PROGRESS | DONE | CANCELED }
+enum TaskPriority{ LOW | MEDIUM | HIGH }
+enum InteractionType { EMAIL | CALL | MEETING | NOTE }
+```
+
+### 5.3 Modèles détaillés
+
+#### User
+```
+id               UUID (PK)
+email            String UNIQUE
+passwordHash     String
+firstName        String?
+lastName         String?
+phone            String?
+profilePhotoPath String?
+role             UserRole @default(SALES)
+createdAt        DateTime
+updatedAt        DateTime
+```
+
+#### Lead
+```
+id                    UUID (PK)
+firstName, lastName   String
+email                 String
+phone                 String?
+company               String?
+source                String?
+stage                 LeadStage @default(Nouveau)
+score                 Float?    (0-10, issu du score IA / 10)
+conversionProbability Float?    (0.0 à 1.0)
+notes                 String?
+ownerId               UUID (FK → User)
+consentDate           DateTime? (RGPD)
+dataOrigin            String?
+isAnonymized          Boolean @default(false)
+createdAt, updatedAt  DateTime
+
+Index: ownerId, email, stage
+```
+
+#### Task
+```
+id               UUID (PK)
+title            String
+description      String?
+type             TaskType @default(TODO)
+status           TaskStatus @default(OPEN)
+priority         TaskPriority @default(MEDIUM)
+progress         Int @default(0)   (0-100%)
+dueDate          DateTime?
+completedAt      DateTime?
+leadId           UUID? (FK → Lead)
+assignedToId     UUID? (FK → User)
+createdById      UUID (FK → User)
+overdueNotifiedAt   DateTime?
+reminderNotifiedAt  DateTime?
+createdAt, updatedAt DateTime
+
+Index: leadId, assignedToId, status, dueDate
+```
+
+#### AuditLog
+```
+id         UUID (PK)
+userId     UUID (FK → User)
+action     String  (CREATE | UPDATE | DELETE | ARCHIVE | ATTACH ...)
+entityType String  (Lead | Task | User)
+entityId   UUID
+oldValue   Json?
+newValue   Json?
+createdAt  DateTime
+
+Index: userId, entityId
+```
+
+#### Notification
+```
+id        UUID (PK)
+userId    UUID (FK → User)
+title     String
+content   String
+read      Boolean @default(false)
+createdAt DateTime
+
+Index: userId
+```
+
+### 5.4 Gestion des migrations
+
+```bash
+npx prisma migrate dev --name description_migration  # développement
+npx prisma migrate deploy                             # production
+npx prisma studio                                     # interface graphique
+```
+
+---
+
+## 6. Backend — API REST
+
+### 6.1 Auth (`/auth`)
+
+| Méthode | Route | Auth requis | Description |
+|---------|-------|-------------|-------------|
+| POST | `/auth/bootstrap` | Non | Créer 1er admin (DB vide) |
+| POST | `/auth/login` | Non | Connexion → cookie JWT |
+| POST | `/auth/logout` | JWT | Déconnexion |
+| POST | `/auth/register` | ADMIN | Créer un utilisateur |
+| GET | `/auth/me` | JWT | Profil courant |
+| PATCH | `/auth/me` | JWT | Modifier profil |
+| POST | `/auth/me/photo` | JWT | Upload photo |
+| GET | `/auth/me/photo` | JWT | Récupérer photo |
+| POST | `/auth/change-password` | JWT | Changer mot de passe |
+
+### 6.2 Leads (`/leads`)
+
+| Méthode | Route | Auth | Description |
+|---------|-------|------|-------------|
+| POST | `/leads` | JWT | Créer prospect |
+| POST | `/leads/import` | JWT | Import CSV (max 5MB) |
+| POST | `/leads/webhook` | Secret | Formulaire externe |
+| POST | `/leads/:id/archive` | ADMIN | Anonymiser (RGPD) |
+| POST | `/leads/:id/unarchive` | ADMIN | Restaurer |
+| GET | `/leads/export-ai` | JWT | Export CSV dataset IA |
+| GET | `/leads` | JWT | Lister avec filtres |
+| GET | `/leads/:id` | JWT | Détail |
+| GET | `/leads/:id/activity` | JWT | Historique |
+| GET | `/leads/:id/prediction` | JWT | Score IA + suggestions |
+| PATCH | `/leads/:id` | JWT | Modifier |
+| DELETE | `/leads/:id` | JWT | Supprimer |
+
+**Filtres `GET /leads`** : `stage`, `ownerId`, `search`, `archived`, `page`, `limit`, `startDate`, `endDate`
+
+**Réponse `GET /leads/:id/prediction`** :
+```json
+{
+  "score": 72,
+  "probability": 0.72,
+  "label": "Élevée",
+  "justification": "Le prospect présente un bon niveau d'engagement...",
+  "nextAction": "Planifier une démonstration cette semaine.",
+  "suggestedTasks": [
+    {
+      "title": "Démonstration produit",
+      "type": "MEETING",
+      "priority": "HIGH",
+      "dueInDays": 3,
+      "description": "Présenter la solution lors d'un appel vidéo."
+    }
+  ]
+}
+```
+
+**Réponse `POST /leads/import`** :
+```json
+{
+  "addedCount": 12,
+  "existingCount": 3,
+  "errorCount": 1,
+  "duplicates": [
+    { "email": "j.dupont@acme.fr", "firstName": "Jean", "lastName": "Dupont", "reason": "email" },
+    { "email": "m.martin@corp.fr", "firstName": "Marie", "lastName": "Martin", "reason": "phone" },
+    { "email": "a.durand@test.fr", "firstName": "Alice", "lastName": "Durand", "reason": "name" }
+  ]
+}
+```
+
+### 6.3 Tasks (`/tasks`)
+
+| Méthode | Route | Description |
+|---------|-------|-------------|
+| POST | `/tasks` | Créer + notifier l'assigné |
+| GET | `/tasks` | Lister (filtres multiples) |
+| GET | `/tasks/stats` | Total / complétées / retard / HIGH |
+| GET | `/tasks/:id` | Détail |
+| PATCH | `/tasks/:id` | Modifier |
+| DELETE | `/tasks/:id` | Supprimer |
+| GET | `/tasks/:id/activity` | Historique |
+| GET | `/tasks/:id/attachments` | Lister fichiers |
+| POST | `/tasks/:id/attachments` | Upload (max 10MB) |
+| GET | `/tasks/attachments/:id/download` | Télécharger |
+| DELETE | `/tasks/attachments/:id` | Supprimer fichier |
+
+**Notification automatique** : si `assignedToId ≠ createdById` → notification WebSocket instantanée avec titre, priorité et lead associé.
+
+### 6.4 Dashboard (`/dashboard`)
+
+| Route | Description | Donnée retournée |
+|-------|-------------|-----------------|
+| `/dashboard/overview` | KPIs globaux | total, won, lost, conversionRate, avgScore |
+| `/dashboard/pipeline` | Métriques par étape | count + percentage par stage |
+| `/dashboard/by-source` | Par source | source, count, percentage |
+| `/dashboard/by-owner` | Par commercial | nom, total, won, lost, conversionRate |
+| `/dashboard/trends?days=30` | Évolution temporelle | date, created, won, lost par jour |
+| `/dashboard/activity?limit=10` | Activité récente | interactions + audit (noms résolus) |
+| `/dashboard/stage-conversion` | Entonnoir | taux de passage entre étapes |
+| `/dashboard/alerts` | Alertes | leads inactifs (>7j) + tâches HIGH en retard |
+
+### 6.5 Users (`/users`)
+
+| Méthode | Route | Auth | Description |
+|---------|-------|------|-------------|
+| POST | `/users` | ADMIN | Créer utilisateur |
+| GET | `/users` | ADMIN/EXEC | Lister |
+| GET | `/users/:id` | ADMIN | Détail |
+| PATCH | `/users/:id` | ADMIN | Modifier |
+| DELETE | `/users/:id` | ADMIN | Supprimer |
+
+### 6.6 Audit (`/audit-logs`)
+
+| Méthode | Route | Auth | Description |
+|---------|-------|------|-------------|
+| GET | `/audit-logs` | ADMIN | Journal complet paginé |
+
+**Filtres** : `entityType`, `entityId`, `userId`, `action`, `page`, `limit` (max 50)
+
+### 6.7 Rate limiting global
+
+```typescript
+ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }])
+// 100 requêtes maximum par minute par adresse IP
+// Appliqué globalement via APP_GUARD
+```
+
+---
+
+## 7. Intégration Intelligence Artificielle
+
+### 7.1 Vue d'ensemble
+
+```
+Lead créé / importé / backend démarré
+        │
+        ▼ (fire-and-forget, non bloquant)
+computeAndSaveScore(leadId)
+        │
+        ├── Prisma: charger lead + interactions + tâches
+        │
+        ├── Vérifier cache (clé = leadId:timestamp:stage)
+        │       └── HIT → retour immédiat (< 1ms)
+        │       └── MISS → continuer
+        │
+        ├── IaService.predictLead(features)
+        │       └── POST http://localhost:11434/api/generate
+        │               model: llama3.1
+        │               temperature: 0.1
+        │               num_predict: 400 tokens
+        │               num_ctx: 2048
+        │               format: json
+        │               timeout: 45s
+        │
+        ├── Parse JSON + normalisation
+        │
+        └── Prisma: update lead.score + lead.conversionProbability
+```
+
+### 7.2 Déclenchement automatique
+
+| Événement | Délai | Comportement |
+|-----------|-------|-------------|
+| Démarrage backend | Immédiat | Score les 50 leads sans score (400ms entre chaque) |
+| Création lead (manuel) | Après réponse HTTP | Score en background |
+| Import CSV | Après création | Score tous les nouveaux leads (300ms entre chaque) |
+| Webhook | Après réponse | Score en background |
+| Clic utilisateur | Synchrone | Recalcul forcé + réponse directe |
+
+### 7.3 Paramètres Ollama optimisés
+
+| Paramètre | Valeur | Raison |
+|-----------|--------|--------|
+| `temperature` | 0.1 | Réponses déterministes et rapides |
+| `num_predict` | 400 | Notre JSON tient en ~250 tokens |
+| `num_ctx` | 2048 | Moins de VRAM → inférence plus rapide |
+
+### 7.4 Features d'entrée (LeadPredictionFeatures)
+
+```typescript
+{
+  // Identité
+  firstName: string;       lastName: string;
+  company: string | null;  source: string | null;
+  stage: string;           notes: string | null;
+
+  // Engagement (interactions)
+  interactionCount: number;
+  callCount: number;    emailCount: number;    meetingCount: number;
+
+  // Tâches
+  taskCount: number;
+  completedTaskCount: number;
+  overdueTaskCount: number;  // Signal négatif fort
+
+  // Temporel
+  daysSinceCreation: number;
+  daysSinceLastActivity: number;
+}
+```
+
+### 7.5 Système de cache intelligent
+
+```typescript
+// Clé = leadId + timestamp dernière activité + étape
+const cacheKey = `${leadId}:${lastActivityAt.getTime()}:${lead.stage}`;
+
+// La clé change automatiquement si :
+// - Nouvelle interaction ajoutée
+// - Stade du lead modifié
+// - Tâche créée ou complétée
+// → Invalidation naturelle sans logique supplémentaire
+```
+
+- **TTL** : 20 minutes
+- **Capacité** : 500 entrées max (FIFO eviction)
+- **Gain de performance** : réponse instantanée si les données n'ont pas changé
+
+### 7.6 Classification du score
+
+| Score | Label | Signification |
+|-------|-------|---------------|
+| 70 – 100 | **Élevée** 🟢 | Lead chaud, action prioritaire |
+| 40 – 69 | **Moyenne** 🟡 | Lead à suivre activement |
+| 0 – 39 | **Faible** 🔴 | Lead froid |
+
+Le score est stocké en base divisé par 10 (`score = iaScore / 10`) pour rester sur l'échelle 0–10 historique.
+
+---
+
+## 8. Notifications temps réel (WebSocket)
+
+### 8.1 Architecture Socket.IO
+
+```typescript
+@WebSocketGateway({ cors: { origin: FRONTEND_ORIGIN, credentials: true } })
+export class NotificationsGateway {
+  @WebSocketServer() server: Server;
+
+  handleConnection(client: Socket) {
+    // 1. Extraire JWT (cookie | Authorization header | query param)
+    // 2. Vérifier la signature JWT
+    // 3. Rejoindre la room privée : "user_${userId}"
+  }
+}
+```
+
+Chaque utilisateur connecté reçoit ses notifications dans une room isolée `user_${userId}`.
+
+### 8.2 Événements déclenchés
+
+| Déclencheur | Destinataire | Contenu |
+|-------------|-------------|---------|
+| Tâche assignée à quelqu'un d'autre | Assigné | Titre tâche + lead + priorité |
+| Lead assigné à un commercial | Commercial | Nom du lead + assigneur |
+| Import CSV terminé | Tous | Rapport (X ajoutés, X doublons...) |
+| Tâche en retard | Assigné | Titre + jours de retard |
+| Rappel tâche (< 24h) | Assigné | Titre + date limite |
+
+### 8.3 Format d'une notification
+
+```json
+{
+  "id": "uuid",
+  "title": "Nouvelle tâche assignée",
+  "content": "\"Appel de découverte\" vous a été assignée par Jean Dupont — Lead : Marie Martin (Priorité : Haute)",
+  "read": false,
+  "createdAt": "2026-06-17T10:30:00.000Z"
+}
+```
+
+### 8.4 Côté Frontend
+
+- Connexion WebSocket dès l'authentification réussie
+- Badge rouge avec compteur sur la cloche
+- Dropdown avec liste des notifications non lues
+- Marquage "lu" individuel ou global
+- Animation à la réception d'une nouvelle notification
+
+---
+
+## 9. Interface Frontend
+
+### 9.1 Routage et protection
+
+```typescript
+// Routes protégées par rôle
+<Route path="/audit" element={<Protected roles={['ADMIN']}><AuditPage /></Protected>} />
+<Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
+```
+
+### 9.2 Navigation par rôle (AppLayout.tsx)
+
+| Rôle | Menu disponible |
+|------|----------------|
+| **ADMIN** | Dashboard · Leads · Pipeline · Tâches · Utilisateurs · Audit |
+| **SALES** | Dashboard · Mes leads · Mon pipeline · Tâches |
+| **MARKETING** | Dashboard · Leads entrants · Tâches |
+| **EXECUTIVE** | Dashboard · Leads · Pipeline · Tâches |
+
+### 9.3 Pages détaillées
+
+#### DashboardPage (`/dashboard`)
+1. **KPI Cards (6)** : Total leads · Taux conversion · En cours · Score IA moyen · Tâches · Tâches critiques
+2. **Graphique de tendance** : SVG pur, 3 courbes (créés / gagnés / perdus) + sélecteur 7/30/90 jours
+3. **Entonnoir de conversion** : Barres horizontales colorées par taux
+4. **Leads par source** : Top 8 sources avec barres proportionnelles
+5. **Classement commerciaux** : Table avec 🥇🥈🥉 et mini progress bars (ADMIN/EXEC)
+6. **Panel alertes** : Leads inactifs >7j + tâches HIGH en retard (ADMIN/EXEC)
+7. **Activité récente** : Feed des dernières interactions avec noms résolus (plus d'UUIDs)
+
+#### LeadsPage (`/leads`)
+- Tableau paginé avec recherche full-text (nom, email, société)
+- **Actions en masse** : checkboxes + barre d'actions (changer stage, archiver, désélectionner)
+- Import CSV → **modale de résultats** avec liste des doublons (email / téléphone / nom)
+- Panel latéral droit : infos contact · score IA avec barre de progression · tâches suggérées · historique interactions · audit log
+- Modal d'assignation pour les tâches suggérées par l'IA (choix du commercial)
+
+#### TasksPage (`/tasks`)
+- Vue **Tableau** et vue **Kanban** (drag & drop entre colonnes)
+- **8 templates prédéfinis** : clic = auto-remplissage du formulaire
+- Filtres : status, type, priorité, retard, recherche textuelle
+- Modal de détails : édition + pièces jointes + historique
+- **Prévisualisation inline** : images (PNG/JPEG/GIF/WEBP) et PDFs
+- Upload / suppression de fichiers (max 10MB)
+
+#### PipelineView (`/pipeline`)
+- 6 colonnes Kanban (une par étape de vente)
+- Drag & drop → appel API `PATCH /leads/:id` automatique
+- Filtres : recherche, score minimum, société, visibilité des colonnes
+
+#### AuditPage (`/audit`) — ADMIN uniquement
+- Journal complet avec filtres (type entité, action)
+- Badges colorés : CREATE (vert) · UPDATE (bleu) · DELETE (rouge) · ARCHIVE (orange)
+- Affichage diff old/new value
+
+### 9.4 Templates de tâches prédéfinis
+
+| Template | Type | Priorité | Délai auto |
+|----------|------|----------|-----------|
+| 📞 Appel de découverte | CALL | HIGH | J+1, 9h00 |
+| ✉️ Email d'introduction | EMAIL | MEDIUM | J+1, 9h00 |
+| 📩 Relance | EMAIL | MEDIUM | J+3, 9h00 |
+| 🤝 Démonstration | MEETING | HIGH | J+5, 9h00 |
+| 📋 Envoyer proposition | TODO | HIGH | J+3, 9h00 |
+| 🔁 Suivi post-réunion | EMAIL | MEDIUM | J+1, 9h00 |
+| 💬 Appel de négociation | CALL | HIGH | J+2, 9h00 |
+| 🏆 Closing | CALL | HIGH | J+1, 9h00 |
+
+Un clic sur un template remplit automatiquement : titre, description, type, priorité et date d'échéance.
+
+---
+
+## 10. Sécurité
+
+### 10.1 Authentification JWT
+
+```
+Login → bcrypt.verify(password, hash)
+     → jwt.sign({ sub: userId, role }) → Cookie HttpOnly
+Requête → JwtAuthGuard → jwt.verify(token) → @CurrentUser()
+```
+
+- Algorithme : HS256
+- Expiration : 7 jours (configurable via `JWT_EXPIRES_IN`)
+- Stockage : Cookie HttpOnly (inaccessible depuis JavaScript)
+
+### 10.2 Contrôle d'accès (RBAC)
+
+```typescript
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+@Delete(':id')
+remove(@CurrentUser() user: AuthUser, ...) { ... }
+```
+
+**Matrice d'accès** :
+
+| Fonctionnalité | ADMIN | EXECUTIVE | MARKETING | SALES |
+|----------------|:-----:|:---------:|:---------:|:-----:|
+| Tous les leads | ✅ | ✅ | ✅ | ❌ |
+| Créer utilisateur | ✅ | ❌ | ❌ | ❌ |
+| Archiver lead | ✅ | ❌ | ❌ | ❌ |
+| Dashboard alertes | ✅ | ✅ | ❌ | ❌ |
+| Journal d'audit | ✅ | ❌ | ❌ | ❌ |
+| Assigner tâche | ✅ | ✅ | ❌ | ❌ |
+| Import CSV | ✅ | ❌ | ✅ | ❌ |
+
+### 10.3 Sécurité des uploads
+
+- Types MIME vérifiés côté serveur (liste blanche stricte)
+- Taille max : 10 MB
+- Noms de fichiers sanitisés (UUID + nom original nettoyé)
+- Path traversal prevention : vérification que le fichier reste dans `uploads/`
+
+### 10.4 Webhook sécurisé
+
+```typescript
+// Comparaison timing-safe (protection contre les attaques temporelles)
+if (!crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+  throw new ForbiddenException('Invalid webhook secret');
+}
+```
+
+### 10.5 RGPD
+
+- Champ `isAnonymized` sur Lead (soft delete)
+- `consentDate` et `dataOrigin` enregistrés à la création
+- Endpoint d'archivage pour anonymiser sans supprimer physiquement
+
+---
+
+## 11. Fonctionnalités avancées
+
+### 11.1 Import CSV — Détection des doublons
+
+```
+Fichier CSV reçu (max 5MB)
+    ↓
+Parse + normalisation des colonnes (majuscules/accents tolérés)
+    ↓
+Déduplication intra-fichier (email + téléphone)
+    ↓
+Vérification DB : email/téléphone existants
+    ↓
+Vérification DB : firstName+lastName (insensible à la casse)
+    ↓
+Création en batch de 100 (transaction Prisma)
+    ↓
+Scoring IA en arrière-plan (300ms entre chaque lead)
+    ↓
+Notification broadcast
+    ↓
+Rapport : { addedCount, existingCount, errorCount, duplicates[] }
+```
+
+Les doublons incluent la raison : `"email"` | `"phone"` | `"name"`
+
+### 11.2 Rappels automatiques (TasksRemindersRunner)
+
+- Tâche planifiée qui vérifie périodiquement les tâches
+- Notification si tâche en retard (et `overdueNotifiedAt` null ou > 24h)
+- Rappel si tâche due dans < 24h (et `reminderNotifiedAt` non défini)
+
+### 11.3 Journal d'audit automatique (AuditInterceptor)
+
+```typescript
+// Intercepte globalement POST/PATCH/DELETE
+// Crée automatiquement un AuditLog pour chaque mutation
+{
+  action: "UPDATE",
+  entityType: "Lead",
+  entityId: "uuid",
+  oldValue: { stage: "Nouveau", score: null },
+  newValue: { stage: "Qualifie", score: 7.2 }
+}
+```
+
+### 11.4 Graphique SVG de tendance
+
+Implémentation SVG pure, sans bibliothèque externe :
+- 3 courbes avec remplissage en gradient
+- Grille de fond transparente
+- Labels de date (début/fin)
+- Totalement responsive (`viewBox` + `preserveAspectRatio`)
+
+### 11.5 Scoring à chaud vs à froid
+
+| Moment | Type | Temps de réponse |
+|--------|------|-----------------|
+| Démarrage backend | Cold (background) | Non bloquant |
+| Création lead | Cold (background) | Non bloquant |
+| Import CSV | Cold (background) | Non bloquant |
+| Clic utilisateur (cache HIT) | Hot | < 1ms |
+| Clic utilisateur (cache MISS) | Hot | 5–45s (Ollama) |
+
+---
+
+## 12. Configuration et déploiement
+
+### 12.1 Variables d'environnement
+
+```env
+# Base de données PostgreSQL
+DATABASE_URL="postgresql://user:password@localhost:5432/crm"
+
+# Authentication JWT
+JWT_SECRET="your-very-secret-key-here"
+JWT_EXPIRES_IN="7d"
+
+# Serveur
+PORT=3001
+NODE_ENV=development
+
+# CORS
+FRONTEND_ORIGIN=http://localhost:5173
+
+# Intelligence Artificielle (Ollama)
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1
+
+# Webhook sécurisé
+WEBHOOK_SECRET=your-webhook-secret
+```
+
+### 12.2 Commandes de démarrage
+
+```bash
+# 1. Installer les dépendances
+cd backend  && npm install
+cd frontend && npm install
+
+# 2. Configurer la base de données
+cd backend && npx prisma migrate dev
+
+# 3. Démarrer Ollama (IA locale)
+ollama serve
+ollama pull llama3.1          # ~4.7 GB
+# Optionnel : modèle plus rapide
+ollama pull llama3.2:1b       # ~1.3 GB, 5-8x plus rapide
+
+# 4. Lancer le développement
+cd backend  && npm run dev    # http://localhost:3001
+cd frontend && npm run dev    # http://localhost:5173
+
+# 5. Documentation API (développement uniquement)
+# http://localhost:3001/api
+```
+
+### 12.3 Build de production
+
+```bash
+cd backend  && npm run build && npm run prod
+cd frontend && npm run build  # → dist/ à servir via Nginx/Apache
+```
+
+### 12.4 Structure des uploads
+
+```
+backend/uploads/
+├── profiles/
+│   └── {userId}/
+│       └── {uuid}_{originalname}
+└── tasks/
+    └── {taskId}/
+        └── {uuid}_{originalname}
+```
+
+---
+
+## 13. Dépendances complètes
+
+### 13.1 Backend
+
+```json
+{
+  "dependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/config": "^4.0.3",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/passport": "^11.0.5",
+    "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/platform-socket.io": "^10.4.22",
+    "@nestjs/swagger": "^7.4.2",
+    "@nestjs/throttler": "^6.5.0",
+    "@nestjs/websockets": "^10.4.22",
+    "@prisma/client": "^5.22.0",
+    "bcrypt": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.4",
+    "csv-parser": "^3.2.0",
+    "multer": "^2.1.1",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.8.1",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.0.0",
+    "@nestjs/testing": "^10.0.0",
+    "jest": "^29.5.0",
+    "prettier": "^3.0.0",
+    "prisma": "^5.22.0",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.1.3"
+  }
+}
+```
+
+### 13.2 Frontend
+
+```json
+{
+  "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.7.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.2",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.1"
+  }
+}
+```
+
+---
+
+## Annexes
+
+### A. Pipeline de vente
+
+```
+Nouveau ──► Contacte ──► Qualifie ──► Proposition ──► Gagne
+                                                  └──► Perdu
+```
+
+| Étape | Couleur | Description |
+|-------|---------|-------------|
+| Nouveau | Bleu #3b82f6 | Lead entrant non traité |
+| Contacté | Violet #8b5cf6 | Premier contact établi |
+| Qualifié | Ambre #f59e0b | Besoin identifié et validé |
+| Proposition | Orange #f97316 | Offre/devis envoyé |
+| Gagné | Vert #10b981 | Contrat signé |
+| Perdu | Rouge #ef4444 | Opportunité perdue |
+
+### B. Types d'interactions
+
+| Type | Description |
+|------|-------------|
+| EMAIL | Échange par email |
+| CALL | Appel téléphonique |
+| MEETING | Réunion physique ou visioconférence |
+| NOTE | Note interne (pas d'interaction client) |
+
+### C. Flux journée type d'un commercial (SALES)
+
+```
+08h00 → Connexion → Dashboard : leads chauds du jour visibles
+08h15 → Leads : filtrer stage "Qualifie"
+08h30 → Ouvrir lead → Score IA 78/100 + suggestion "Démo produit"
+08h35 → Créer tâche depuis suggestion IA (template pré-rempli, J+3)
+08h36 → Notification reçue par le commercial assigné
+09h00 → Appel client → Ajouter interaction "CALL"
+09h30 → Changer stage : "Qualifie" → "Proposition"
+10h00 → Notification reçue : "Nouveau lead assigné par Marketing"
+11h00 → Import CSV de 50 nouveaux leads
+11h00 → Rapport : 42 ajoutés, 6 doublons email, 2 doublons nom
+11h05 → Les 42 leads scorés automatiquement par IA en arrière-plan
+17h00 → Dashboard : classement → je suis 2ème avec 65% de conversion
+```
+
+### D. Points de différenciation
+
+1. **IA locale** : Aucun envoi de données à des serveurs tiers (Ollama tourne en local)
+2. **Scoring automatique** : Les leads sont scorés dès leur création, sans action manuelle
+3. **Cache intelligent** : La clé de cache intègre la version des données → invalidation naturelle
+4. **Audit complet** : Chaque modification est journalisée avec l'état avant/après
+5. **Temps réel** : WebSocket pour notifications instantanées sans polling
+6. **RGPD-ready** : Archivage soft (isAnonymized), consentement tracé
+
+---
+
+*Documentation technique — CRM Prédictif v2.0 — Juin 2026*

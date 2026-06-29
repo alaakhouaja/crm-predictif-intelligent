@@ -9,12 +9,16 @@ import { Prisma, TaskPriority, TaskStatus, TaskType } from '@prisma/client';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private readonly taskInclude = {
     lead: {
@@ -178,6 +182,20 @@ export class TasksService {
       },
       include: this.taskInclude,
     });
+
+    // Notify the assignee if the task was assigned to someone else
+    if (assignedToId && assignedToId !== user.id) {
+      const creatorName = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email;
+      const leadInfo = task.lead ? ` — Lead : ${task.lead.firstName} ${task.lead.lastName}` : '';
+      const priorityLabel: Record<string, string> = { HIGH: 'Haute', MEDIUM: 'Moyenne', LOW: 'Basse' };
+      const prio = priorityLabel[task.priority] ?? task.priority;
+      await this.notifications.create(
+        assignedToId,
+        'Nouvelle tâche assignée',
+        `"${task.title}" vous a été assignée par ${creatorName}${leadInfo} (Priorité : ${prio})`,
+      );
+    }
+
     return task;
   }
 

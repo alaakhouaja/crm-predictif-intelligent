@@ -11,7 +11,8 @@ import {
   ChevronDown,
   BrainCircuit,
   X,
-  RefreshCw
+  RefreshCw,
+  Shield,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { NotificationBell } from './NotificationBell';
@@ -36,6 +37,7 @@ export function AppLayout({ children }: LayoutProps) {
         { label: 'Pipeline', path: '/pipeline', icon: Kanban },
         { label: 'Tâches', path: '/tasks', icon: CheckSquare },
         { label: 'Utilisateurs', path: '/users', icon: Users },
+        { label: 'Audit', path: '/audit', icon: Shield },
       ];
     }
     if (user?.role === 'SALES') {

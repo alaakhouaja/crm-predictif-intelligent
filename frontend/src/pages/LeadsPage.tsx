@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, type FormEvent } from 'react';
+import React, { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSearchParams } from 'react-router-dom';
 import { 
@@ -33,6 +33,7 @@ import type {
   AuthUser,
   Lead,
   LeadPrediction,
+  SuggestedTask,
   LeadStage,
   PaginatedResponse,
   Interaction,
@@ -63,8 +64,16 @@ export function LeadsPage() {
     addedCount: number;
     existingCount: number;
     errorCount: number;
+    duplicates: Array<{ email: string; firstName: string; lastName: string; reason: 'email' | 'phone' | 'name' }>;
   } | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Bulk selection
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  const [bulkStage, setBulkStage] = useState<LeadStage | ''>('');
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
   // Formulaire Lead (Creation)
   const [createFirstName, setCreateFirstName] = useState('');
@@ -94,6 +103,9 @@ export function LeadsPage() {
   const [leadPrediction, setLeadPrediction] = useState<LeadPrediction | null>(null);
   const [loadingLeadPrediction, setLoadingLeadPrediction] = useState(false);
   const [leadPredictionError, setLeadPredictionError] = useState<string | null>(null);
+  const [creatingTaskFromSuggestion, setCreatingTaskFromSuggestion] = useState<number | null>(null);
+  const [pendingSuggestedTask, setPendingSuggestedTask] = useState<{ task: SuggestedTask; index: number } | null>(null);
+  const [suggestedTaskAssigneeId, setSuggestedTaskAssigneeId] = useState<string>('');
   const [assignableUsers, setAssignableUsers] = useState<AuthUser[]>([]);
 
   // Modaux
@@ -291,18 +303,21 @@ export function LeadsPage() {
         addedCount: number;
         existingCount: number;
         errorCount: number;
+        duplicates: Array<{ email: string; firstName: string; lastName: string; reason: 'email' | 'phone' | 'name' }>;
       }>('/leads/import', {
         method: 'POST',
         body: formData,
         // Ne pas mettre de Content-Type ici pour que fetch le gère automatiquement avec le boundary
-        headers: {} 
+        headers: {}
       });
       if (res) {
         setImportSummary({
           addedCount: res.addedCount,
           existingCount: res.existingCount,
           errorCount: res.errorCount,
+          duplicates: res.duplicates ?? [],
         });
+        setImportModalOpen(true);
         await load();
       }
     } catch (err) {
@@ -635,6 +650,50 @@ export function LeadsPage() {
     }
   }
 
+  function onCreateTaskFromSuggestion(task: SuggestedTask, index: number) {
+    // Pre-select: if only one assignable user, pre-select them
+    const defaultAssignee = assignableUsers.length === 1 ? assignableUsers[0].id : '';
+    setSuggestedTaskAssigneeId(defaultAssignee);
+    setPendingSuggestedTask({ task, index });
+  }
+
+  async function onConfirmSuggestedTask() {
+    if (!user || !selectedLead || !pendingSuggestedTask) return;
+    const { task, index } = pendingSuggestedTask;
+
+    if (canAssignTaskToOthers && !suggestedTaskAssigneeId) {
+      toast.error('Veuillez choisir un commercial.', 'IA');
+      return;
+    }
+
+    setCreatingTaskFromSuggestion(index);
+    try {
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + task.dueInDays);
+      await api('/tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: task.title,
+          description: task.description || undefined,
+          leadId: selectedLead.id,
+          type: task.type,
+          priority: task.priority,
+          dueDate: dueDate.toISOString(),
+          assignedToId: canAssignTaskToOthers && suggestedTaskAssigneeId
+            ? suggestedTaskAssigneeId
+            : undefined,
+        }),
+      });
+      setPendingSuggestedTask(null);
+      await loadTasks(selectedLead.id);
+      toast.success?.('Tâche créée avec succès', 'IA');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur création tâche', 'IA');
+    } finally {
+      setCreatingTaskFromSuggestion(null);
+    }
+  }
+
   async function markTaskDone(id: string) {
     if (!user || !selectedLead) return;
     const task = tasks.find((t) => t.id === id);
@@ -725,6 +784,88 @@ export function LeadsPage() {
     setIsTaskCreateModalOpen(true);
   }
 
+  // ── Bulk selection helpers ──────────────────────────────────────────────────
+  const allOnPageSelected = leads.length > 0 && leads.every((l) => selectedLeadIds.has(l.id));
+  const someOnPageSelected = leads.some((l) => selectedLeadIds.has(l.id));
+
+  // Sync indeterminate state on the "select all" checkbox
+  useEffect(() => {
+    if (selectAllCheckboxRef.current) {
+      selectAllCheckboxRef.current.indeterminate = someOnPageSelected && !allOnPageSelected;
+    }
+  }, [someOnPageSelected, allOnPageSelected]);
+
+  function toggleSelectAll() {
+    if (allOnPageSelected) {
+      // Deselect all on current page
+      setSelectedLeadIds((prev) => {
+        const next = new Set(prev);
+        leads.forEach((l) => next.delete(l.id));
+        return next;
+      });
+    } else {
+      // Select all on current page
+      setSelectedLeadIds((prev) => {
+        const next = new Set(prev);
+        leads.forEach((l) => next.add(l.id));
+        return next;
+      });
+    }
+  }
+
+  function toggleSelectLead(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function onBulkChangeStage() {
+    if (!bulkStage || selectedLeadIds.size === 0 || bulkLoading) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(
+        Array.from(selectedLeadIds).map((id) =>
+          api<Lead>(`/leads/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ stage: bulkStage }),
+          }),
+        ),
+      );
+      toast.success(`${selectedLeadIds.size} lead(s) mis à jour`, 'Bulk');
+      setSelectedLeadIds(new Set());
+      setBulkStage('');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erreur lors du changement de stade', 'Bulk');
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  async function onBulkArchive() {
+    if (selectedLeadIds.size === 0 || bulkLoading) return;
+    if (!window.confirm(`Archiver ${selectedLeadIds.size} lead(s) sélectionné(s) ?`)) return;
+    setBulkLoading(true);
+    try {
+      await Promise.all(
+        Array.from(selectedLeadIds).map((id) =>
+          api<Lead>(`/leads/${id}/archive`, { method: 'POST' }),
+        ),
+      );
+      toast.success(`${selectedLeadIds.size} lead(s) archivé(s)`, 'Bulk');
+      setSelectedLeadIds(new Set());
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erreur lors de l'archivage", 'Bulk');
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
   return (
     <div className="leads-page">
       {/* Header with quick actions */}
@@ -748,6 +889,87 @@ export function LeadsPage() {
           )}
         </div>
       </div>
+
+      {/* ── Modal assignation tâche IA ── */}
+      <AnimatePresence>
+        {pendingSuggestedTask && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.92, opacity: 0 }}
+              className="card"
+              style={{ width: '100%', maxWidth: '440px', padding: '2rem' }}
+            >
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800, fontSize: '1rem' }}>
+                  <span>{{ CALL: '📞', EMAIL: '✉️', MEETING: '🤝', TODO: '✅' }[pendingSuggestedTask.task.type] ?? '✅'}</span>
+                  Créer la tâche IA
+                </div>
+                <button type="button" onClick={() => setPendingSuggestedTask(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Détails tâche */}
+              <div style={{ padding: '0.85rem 1rem', borderRadius: '10px', background: 'rgba(0,212,184,0.06)', border: '1px solid rgba(0,212,184,0.2)', marginBottom: '1.25rem' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: '0.35rem', color: 'var(--text-main)' }}>
+                  {pendingSuggestedTask.task.title}
+                </div>
+                {pendingSuggestedTask.task.description && (
+                  <p className="muted small" style={{ margin: '0 0 0.5rem 0', lineHeight: 1.5 }}>
+                    {pendingSuggestedTask.task.description}
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  <span>Priorité : <strong style={{ color: ({ HIGH: 'var(--danger)', MEDIUM: 'var(--warning)', LOW: 'var(--text-muted)' } as Record<string,string>)[pendingSuggestedTask.task.priority] }}>{({ HIGH: 'Urgent', MEDIUM: 'Normal', LOW: 'Faible' } as Record<string,string>)[pendingSuggestedTask.task.priority]}</strong></span>
+                  <span>Délai : <strong style={{ color: 'var(--text-main)' }}>J+{pendingSuggestedTask.task.dueInDays}</strong></span>
+                </div>
+              </div>
+
+              {/* Sélection du commercial */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label className="muted small" style={{ display: 'block', fontWeight: 700, marginBottom: '0.4rem' }}>
+                  Assigner à un commercial <span style={{ color: 'var(--danger)' }}>*</span>
+                </label>
+                {canAssignTaskToOthers ? (
+                  <select
+                    value={suggestedTaskAssigneeId}
+                    onChange={e => setSuggestedTaskAssigneeId(e.target.value)}
+                  >
+                    <option value="">— Choisir un commercial —</option>
+                    {assignableUsers.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.email}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div style={{ padding: '0.6rem 0.85rem', borderRadius: 'var(--radius-sm)', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', fontSize: '0.9rem' }}>
+                    {user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : user?.email} (vous)
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button type="button" className="secondary" onClick={() => setPendingSuggestedTask(null)}>
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={creatingTaskFromSuggestion !== null || (canAssignTaskToOthers && !suggestedTaskAssigneeId)}
+                  onClick={onConfirmSuggestedTask}
+                >
+                  {creatingTaskFromSuggestion !== null ? 'Création…' : 'Créer la tâche'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {isCreateModalOpen && (
@@ -863,17 +1085,71 @@ export function LeadsPage() {
               </div>
             </div>
 
-            {importSummary && (
-              <div className="import-summary-banner">
-                <div className="import-summary-icon">
-                  {importSummary.errorCount > 0 ? <AlertTriangle size={18} /> : <CheckCircle size={18} />}
+
+            {/* ── Barre d'actions en masse ── */}
+            {selectedLeadIds.size > 0 && (
+              <div style={{
+                background: 'rgba(59,130,246,0.08)',
+                border: '1px solid rgba(59,130,246,0.25)',
+                borderRadius: 'var(--radius-md)',
+                padding: '10px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                margin: '0 1.5rem 0.75rem',
+                flexWrap: 'wrap',
+              }}>
+                <span style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-main)', flexShrink: 0 }}>
+                  {selectedLeadIds.size} lead(s) sélectionné(s)
+                </span>
+
+                {/* Changer de stade */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <select
+                    value={bulkStage}
+                    onChange={(e) => setBulkStage(e.target.value as LeadStage | '')}
+                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', width: 'auto' }}
+                    disabled={bulkLoading}
+                  >
+                    <option value="">— Changer de stade —</option>
+                    <option value="Nouveau">Nouveau</option>
+                    <option value="Contacte">Contacte</option>
+                    <option value="Qualifie">Qualifie</option>
+                    <option value="Proposition">Proposition</option>
+                    <option value="Gagne">Gagne</option>
+                    <option value="Perdu">Perdu</option>
+                  </select>
+                  <button
+                    className="primary small"
+                    disabled={!bulkStage || bulkLoading}
+                    onClick={() => void onBulkChangeStage()}
+                    style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
+                  >
+                    {bulkLoading ? <RefreshCw size={12} className="animate-spin" /> : 'Appliquer'}
+                  </button>
                 </div>
-                <div className="import-summary-content">
-                  <div className="import-summary-title">Resume de l'import CSV</div>
-                  <div className="import-summary-text">
-                    {importSummary.addedCount} lead(s) ajoute(s), {importSummary.existingCount} deja existant(s), {importSummary.errorCount} erreur(s).
-                  </div>
-                </div>
+
+                {/* Archiver */}
+                {canArchive && (
+                  <button
+                    className="secondary small"
+                    disabled={bulkLoading}
+                    onClick={() => void onBulkArchive()}
+                    style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', color: 'var(--warning)' }}
+                  >
+                    <Archive size={13} /> Archiver
+                  </button>
+                )}
+
+                {/* Désélectionner */}
+                <button
+                  className="secondary small"
+                  disabled={bulkLoading}
+                  onClick={() => setSelectedLeadIds(new Set())}
+                  style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', marginLeft: 'auto' }}
+                >
+                  <X size={13} /> Désélectionner tout
+                </button>
               </div>
             )}
 
@@ -881,6 +1157,16 @@ export function LeadsPage() {
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: '40px', textAlign: 'center' }}>
+                      <input
+                        ref={selectAllCheckboxRef}
+                        type="checkbox"
+                        checked={allOnPageSelected}
+                        onChange={toggleSelectAll}
+                        title="Tout sélectionner"
+                        style={{ cursor: 'pointer', accentColor: 'var(--primary)' }}
+                      />
+                    </th>
                     <th>Prospect</th>
                     <th>Entreprise</th>
                     <th>Statut</th>
@@ -889,81 +1175,99 @@ export function LeadsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {leads.map((l) => (
-                    <motion.tr 
-                      layout
-                      key={l.id} 
-                      className={selectedLead?.id === l.id ? 'active' : ''}
-                      onClick={() => setSelectedLead(l)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <td>
-                        <div className="flex-center">
-                          <div style={{ 
-                            width: '40px', 
-                            height: '40px', 
-                            borderRadius: '12px', 
-                            background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))', 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'center', 
-                            fontWeight: 800, 
-                            color: 'white',
-                            boxShadow: 'var(--shadow-sm)'
-                          }}>
-                            {l.firstName[0]}{l.lastName[0]}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{l.firstName} {l.lastName}</div>
-                            <div className="text-muted" style={{ fontSize: '0.75rem' }}>{l.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="flex-center small text-muted">
-                          <Building2 size={14} />
-                          {l.company || '—'}
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`badge ${
-                          l.stage === 'Gagne' ? 'badge-green' : 
-                          l.stage === 'Perdu' ? 'badge-red' : 
-                          l.stage === 'Nouveau' ? 'badge-blue' : 'badge-orange'
-                        }`}>
-                          {l.stage}
-                        </span>
-                      </td>
-                      <td>
-                        {l.score ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            <div className="flex-between x-small">
-                              <span style={{ fontWeight: 800, color: l.score > 7 ? 'var(--success)' : 'var(--text-main)' }}>{l.score * 10}%</span>
+                  {leads.map((l) => {
+                    const isChecked = selectedLeadIds.has(l.id);
+                    return (
+                      <motion.tr
+                        layout
+                        key={l.id}
+                        className={selectedLead?.id === l.id ? 'active' : ''}
+                        onClick={() => setSelectedLead(l)}
+                        style={{
+                          cursor: 'pointer',
+                          background: isChecked ? 'rgba(59,130,246,0.07)' : undefined,
+                        }}
+                      >
+                        <td
+                          style={{ width: '40px', textAlign: 'center' }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {/* handled by onClick */}}
+                            onClick={(e) => toggleSelectLead(l.id, e)}
+                            style={{ cursor: 'pointer', accentColor: 'var(--primary)' }}
+                          />
+                        </td>
+                        <td>
+                          <div className="flex-center">
+                            <div style={{
+                              width: '40px',
+                              height: '40px',
+                              borderRadius: '12px',
+                              background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontWeight: 800,
+                              color: 'white',
+                              boxShadow: 'var(--shadow-sm)'
+                            }}>
+                              {l.firstName[0]}{l.lastName[0]}
                             </div>
-                            <div style={{ width: '80px', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', overflow: 'hidden' }}>
-                              <motion.div 
-                                initial={{ width: 0 }}
-                                animate={{ width: `${l.score * 10}%` }}
-                                style={{ 
-                                  height: '100%', 
-                                  background: l.score > 7 
-                                    ? 'linear-gradient(90deg, #10b981, #34d399)' 
-                                    : 'linear-gradient(90deg, var(--primary), var(--primary-light))' 
-                                }} 
-                              />
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{l.firstName} {l.lastName}</div>
+                              <div className="text-muted" style={{ fontSize: '0.75rem' }}>{l.email}</div>
                             </div>
                           </div>
-                        ) : (
-                          <span className="text-muted x-small">Calcul en cours...</span>
-                        )}
-                      </td>
-                      <td>
-                        <button className="secondary small" style={{ padding: '0.4rem' }}>
-                          <MoreVertical size={14} />
-                        </button>
-                      </td>
-                    </motion.tr>
-                  ))}
+                        </td>
+                        <td>
+                          <div className="flex-center small text-muted">
+                            <Building2 size={14} />
+                            {l.company || '—'}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge ${
+                            l.stage === 'Gagne' ? 'badge-green' :
+                            l.stage === 'Perdu' ? 'badge-red' :
+                            l.stage === 'Nouveau' ? 'badge-blue' : 'badge-orange'
+                          }`}>
+                            {l.stage}
+                          </span>
+                        </td>
+                        <td>
+                          {l.score ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div className="flex-between x-small">
+                                <span style={{ fontWeight: 800, color: l.score > 7 ? 'var(--success)' : 'var(--text-main)' }}>{l.score * 10}%</span>
+                              </div>
+                              <div style={{ width: '80px', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', overflow: 'hidden' }}>
+                                <motion.div
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${l.score * 10}%` }}
+                                  style={{
+                                    height: '100%',
+                                    background: l.score > 7
+                                      ? 'linear-gradient(90deg, #10b981, #34d399)'
+                                      : 'linear-gradient(90deg, var(--primary), var(--primary-light))'
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-muted x-small">Calcul en cours...</span>
+                          )}
+                        </td>
+                        <td>
+                          <button className="secondary small" style={{ padding: '0.4rem' }}>
+                            <MoreVertical size={14} />
+                          </button>
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1234,64 +1538,119 @@ export function LeadsPage() {
                   <div style={{ marginBottom: '2.5rem', border: '1px solid var(--glass-border)', borderRadius: 'var(--radius-md)', padding: '1.25rem', background: 'rgba(30, 41, 59, 0.35)' }}>
                     <div className="flex-between" style={{ marginBottom: '1rem', gap: '1rem', alignItems: 'center' }}>
                       <div className="flex-center" style={{ gap: '0.5rem', fontWeight: 800 }}>
-                        <BrainCircuit size={16} /> Prédiction IA
+                        <BrainCircuit size={16} /> Analyse IA
                       </div>
                       {leadPrediction && (
-                        <span
-                          className="badge"
-                          style={predictionBadgeStyle(leadPrediction.label)}
-                        >
+                        <span className="badge" style={predictionBadgeStyle(leadPrediction.label)}>
                           {leadPrediction.label}
                         </span>
                       )}
                     </div>
 
                     {loadingLeadPrediction ? (
-                      <div className="flex-center" style={{ padding: '1.5rem', justifyContent: 'center' }}>
-                        <RefreshCw size={24} className="animate-spin text-muted" />
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', padding: '1.5rem' }}>
+                        <RefreshCw size={22} className="animate-spin" style={{ color: 'var(--primary)' }} />
+                        <span className="muted small">Llama analyse le lead…</span>
                       </div>
                     ) : leadPrediction ? (
                       <>
+                        {/* Score + probabilité */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                           <div style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '1rem', background: 'rgba(15, 23, 42, 0.45)' }}>
-                            <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                              Score global
-                            </div>
+                            <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Score</div>
                             <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                              {leadPrediction.score.toFixed(1)}/100
+                              {leadPrediction.score}/100
                             </div>
                           </div>
-
                           <div style={{ border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '1rem', background: 'rgba(15, 23, 42, 0.45)' }}>
-                            <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                              Probabilité
-                            </div>
+                            <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Probabilité</div>
                             <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                              {(leadPrediction.probability * 100).toFixed(1)}%
+                              {(leadPrediction.probability * 100).toFixed(0)}%
                             </div>
                           </div>
                         </div>
 
-                        <div style={{ width: '100%', height: '10px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.08)' }}>
-                          <div
-                            style={{
-                              width: `${Math.max(0, Math.min(100, leadPrediction.score))}%`,
-                              height: '100%',
-                              borderRadius: '999px',
-                              background:
-                                leadPrediction.label === 'Élevée'
-                                  ? 'linear-gradient(90deg, #10B981, #34D399)'
-                                  : leadPrediction.label === 'Moyenne'
-                                    ? 'linear-gradient(90deg, #F59E0B, #FBBF24)'
-                                    : 'linear-gradient(90deg, #EF4444, #F87171)',
-                            }}
-                          />
+                        {/* Barre de progression */}
+                        <div style={{ width: '100%', height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.08)', marginBottom: '1rem' }}>
+                          <div style={{
+                            width: `${Math.max(0, Math.min(100, leadPrediction.score))}%`,
+                            height: '100%',
+                            borderRadius: '999px',
+                            background: leadPrediction.label === 'Élevée'
+                              ? 'linear-gradient(90deg, #10B981, #34D399)'
+                              : leadPrediction.label === 'Moyenne'
+                                ? 'linear-gradient(90deg, #F59E0B, #FBBF24)'
+                                : 'linear-gradient(90deg, #EF4444, #F87171)',
+                            transition: 'width 0.6s ease',
+                          }} />
                         </div>
+
+                        {/* Justification */}
+                        <div style={{ marginBottom: '0.75rem', padding: '0.75rem', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--glass-border)' }}>
+                          <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem', letterSpacing: '0.05em' }}>
+                            Justification
+                          </div>
+                          <p className="small" style={{ margin: 0, lineHeight: 1.6, color: 'var(--text-main)' }}>
+                            {leadPrediction.justification}
+                          </p>
+                        </div>
+
+                        {/* Action recommandée */}
+                        <div style={{ padding: '0.75rem', borderRadius: '10px', background: 'rgba(0, 212, 184, 0.06)', border: '1px solid rgba(0, 212, 184, 0.2)', marginBottom: leadPrediction.suggestedTasks?.length ? '0.75rem' : 0 }}>
+                          <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem', letterSpacing: '0.05em', color: 'var(--primary)' }}>
+                            ⚡ Action recommandée
+                          </div>
+                          <p className="small" style={{ margin: 0, lineHeight: 1.6, color: 'var(--text-main)', fontWeight: 600 }}>
+                            {leadPrediction.nextAction}
+                          </p>
+                        </div>
+
+                        {/* Tâches suggérées */}
+                        {leadPrediction.suggestedTasks?.length > 0 && (
+                          <div>
+                            <div className="text-muted x-small" style={{ fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.6rem', letterSpacing: '0.05em' }}>
+                              Tâches suggérées par l'IA
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                              {leadPrediction.suggestedTasks.map((task, i) => {
+                                const typeIcon: Record<string, string> = { CALL: '📞', EMAIL: '✉️', MEETING: '🤝', TODO: '✅' };
+                                const priorityColor: Record<string, string> = { HIGH: 'var(--danger)', MEDIUM: 'var(--warning)', LOW: 'var(--text-muted)' };
+                                const priorityLabel: Record<string, string> = { HIGH: 'Urgent', MEDIUM: 'Normal', LOW: 'Faible' };
+                                const isCreating = creatingTaskFromSuggestion === i;
+                                return (
+                                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.7rem 0.85rem', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)' }}>
+                                    <span style={{ fontSize: '1rem', flexShrink: 0, marginTop: '1px' }}>{typeIcon[task.type] ?? '✅'}</span>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.2rem', color: 'var(--text-main)' }}>{task.title}</div>
+                                      {task.description && (
+                                        <div className="muted small" style={{ marginBottom: '0.3rem', lineHeight: 1.4 }}>{task.description}</div>
+                                      )}
+                                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: priorityColor[task.priority] }}>{priorityLabel[task.priority]}</span>
+                                        <span className="muted" style={{ fontSize: '0.7rem' }}>·</span>
+                                        <span className="muted" style={{ fontSize: '0.7rem' }}>Dans {task.dueInDays} jour{task.dueInDays > 1 ? 's' : ''}</span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="primary small"
+                                      style={{ flexShrink: 0, fontSize: '0.75rem', padding: '0.3rem 0.7rem' }}
+                                      disabled={isCreating || creatingTaskFromSuggestion !== null}
+                                      onClick={() => onCreateTaskFromSuggestion(task, i)}
+                                    >
+                                      {isCreating ? '…' : '+ Créer'}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </>
                     ) : (
                       <div style={{ padding: '1rem', border: '1px dashed var(--glass-border)', borderRadius: '12px' }}>
                         <p className="text-muted small" style={{ margin: 0 }}>
-                          {leadPredictionError ?? 'Prédiction IA indisponible pour ce lead.'}
+                          {leadPredictionError ?? 'Service IA indisponible. Vérifiez qu\'Ollama est lancé.'}
                         </p>
                       </div>
                     )}
@@ -1501,6 +1860,151 @@ export function LeadsPage() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* ── Modale résultats import CSV ── */}
+      {importModalOpen && importSummary && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1500,
+            padding: '1rem',
+          }}
+          onClick={() => setImportModalOpen(false)}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: '620px',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              padding: '2rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1.5rem',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Titre + bouton fermer */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                Résultats de l'import CSV
+              </h2>
+              <button
+                className="icon-btn"
+                onClick={() => setImportModalOpen(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.25rem' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Compteurs */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+              <div style={{
+                background: 'rgba(34,197,94,0.12)',
+                border: '1px solid rgba(34,197,94,0.3)',
+                borderRadius: 'var(--radius-md)',
+                padding: '1rem',
+                textAlign: 'center',
+              }}>
+                <CheckCircle size={20} style={{ color: '#22c55e', marginBottom: '0.4rem' }} />
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#22c55e' }}>{importSummary.addedCount}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>Ajouté(s)</div>
+              </div>
+              <div style={{
+                background: 'rgba(251,146,60,0.12)',
+                border: '1px solid rgba(251,146,60,0.3)',
+                borderRadius: 'var(--radius-md)',
+                padding: '1rem',
+                textAlign: 'center',
+              }}>
+                <AlertTriangle size={20} style={{ color: '#fb923c', marginBottom: '0.4rem' }} />
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#fb923c' }}>{importSummary.existingCount}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>Doublon(s)</div>
+              </div>
+              <div style={{
+                background: 'rgba(239,68,68,0.12)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: 'var(--radius-md)',
+                padding: '1rem',
+                textAlign: 'center',
+              }}>
+                <X size={20} style={{ color: '#ef4444', marginBottom: '0.4rem' }} />
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#ef4444' }}>{importSummary.errorCount}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>Erreur(s)</div>
+              </div>
+            </div>
+
+            {/* Tableau des doublons */}
+            {importSummary.duplicates.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                  Doublons ignorés ({importSummary.duplicates.length})
+                </h3>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Nom</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Email</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Raison</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importSummary.duplicates.map((dup, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-main)' }}>
+                            {dup.firstName} {dup.lastName}
+                          </td>
+                          <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)' }}>{dup.email}</td>
+                          <td style={{ padding: '0.5rem 0.75rem' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '0.15rem 0.5rem',
+                              borderRadius: '999px',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              background: dup.reason === 'email'
+                                ? 'rgba(59,130,246,0.15)'
+                                : dup.reason === 'phone'
+                                ? 'rgba(251,146,60,0.15)'
+                                : 'rgba(168,85,247,0.15)',
+                              color: dup.reason === 'email'
+                                ? '#60a5fa'
+                                : dup.reason === 'phone'
+                                ? '#fb923c'
+                                : '#c084fc',
+                            }}>
+                              {dup.reason === 'email'
+                                ? 'Email en double'
+                                : dup.reason === 'phone'
+                                ? 'Téléphone en double'
+                                : 'Nom identique'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Bouton fermer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="primary" onClick={() => setImportModalOpen(false)}>
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -56,10 +56,21 @@ export type Lead = {
   updatedAt: string;
 };
 
+export type SuggestedTask = {
+  title: string;
+  type: 'CALL' | 'EMAIL' | 'MEETING' | 'TODO';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH';
+  dueInDays: number;
+  description: string;
+};
+
 export type LeadPrediction = {
   probability: number;
   score: number;
   label: 'Élevée' | 'Moyenne' | 'Faible';
+  justification: string;
+  nextAction: string;
+  suggestedTasks: SuggestedTask[];
 };
 
 export type Interaction = {

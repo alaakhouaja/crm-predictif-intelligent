@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd';
-import { Plus, X, CheckCircle2, AlertTriangle, Clock, Pencil, Ban, Kanban, List, Paperclip, Activity } from 'lucide-react';
+import { Plus, X, CheckCircle2, AlertTriangle, Clock, Pencil, Ban, Kanban, List, Paperclip, Activity, Eye } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../components/ToastProvider';
@@ -11,6 +11,17 @@ import type { AuditLogEntry, AuthUser, PaginatedResponse, Task, TaskAttachment, 
 const statuses: TaskStatus[] = ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELED'];
 const priorities: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
 const types: TaskType[] = ['CALL', 'EMAIL', 'MEETING', 'TODO'];
+
+const TASK_TEMPLATES = [
+  { id: 'appel-decouverte', label: '📞 Appel de découverte', type: 'CALL' as TaskType, priority: 'HIGH' as TaskPriority, title: 'Appel de découverte', description: 'Premier contact téléphonique pour comprendre les besoins du prospect.', dueInDays: 1 },
+  { id: 'email-intro', label: '✉️ Email d\'introduction', type: 'EMAIL' as TaskType, priority: 'MEDIUM' as TaskPriority, title: 'Email d\'introduction', description: 'Envoyer un email de présentation avec notre offre commerciale.', dueInDays: 1 },
+  { id: 'relance', label: '📩 Relance', type: 'EMAIL' as TaskType, priority: 'MEDIUM' as TaskPriority, title: 'Relance commerciale', description: 'Relancer le prospect suite à un premier contact sans réponse.', dueInDays: 3 },
+  { id: 'demo', label: '🤝 Démonstration', type: 'MEETING' as TaskType, priority: 'HIGH' as TaskPriority, title: 'Démonstration produit', description: 'Présentation live du produit/service au prospect.', dueInDays: 5 },
+  { id: 'proposition', label: '📋 Envoyer proposition', type: 'TODO' as TaskType, priority: 'HIGH' as TaskPriority, title: 'Envoyer la proposition commerciale', description: 'Préparer et envoyer le devis ou la proposition commerciale.', dueInDays: 3 },
+  { id: 'suivi', label: '🔁 Suivi post-réunion', type: 'EMAIL' as TaskType, priority: 'MEDIUM' as TaskPriority, title: 'Suivi post-réunion', description: 'Envoyer un récapitulatif de la réunion et les prochaines étapes.', dueInDays: 1 },
+  { id: 'negociation', label: '💬 Appel de négociation', type: 'CALL' as TaskType, priority: 'HIGH' as TaskPriority, title: 'Appel de négociation', description: 'Discuter des conditions tarifaires et finaliser les termes.', dueInDays: 2 },
+  { id: 'closing', label: '🏆 Closing', type: 'CALL' as TaskType, priority: 'HIGH' as TaskPriority, title: 'Appel de closing', description: 'Appel final pour confirmer l\'accord et les modalités de signature.', dueInDays: 1 },
+];
 
 type SortBy = '' | 'priority' | 'dueDate' | 'status' | 'progress' | 'createdAt';
 type SortDir = 'asc' | 'desc';
@@ -57,6 +68,7 @@ export function TasksPage() {
   const [progress, setProgress] = useState(0);
   const [dueDate, setDueDate] = useState('');
   const [assignedToId, setAssignedToId] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState('');
 
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
@@ -72,6 +84,7 @@ export function TasksPage() {
   const [activityLogs, setActivityLogs] = useState<AuditLogEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ url: string; mime: string; name: string } | null>(null);
 
   const [stats, setStats] = useState<{ total: number; completed: number; overdue: number; highPriority: number } | null>(null);
 
@@ -195,7 +208,23 @@ export function TasksPage() {
     setDueDate('');
     setType(allowedTypes[0] ?? 'TODO');
     setAssignedToId('');
+    setSelectedTemplate('');
     setModalOpen(true);
+  }
+
+  function applyTemplate(templateId: string) {
+    const tpl = TASK_TEMPLATES.find(t => t.id === templateId);
+    if (!tpl) return;
+    setTitle(tpl.title);
+    setDescription(tpl.description);
+    setType(tpl.type);
+    setPriority(tpl.priority);
+    const d = new Date();
+    d.setDate(d.getDate() + tpl.dueInDays);
+    d.setHours(9, 0, 0, 0);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    setDueDate(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T09:00`);
+    setSelectedTemplate(templateId);
   }
 
   async function onCreate(e: FormEvent) {
@@ -219,6 +248,7 @@ export function TasksPage() {
           assignedToId: canAssignOtherUsers && assignedToId ? assignedToId : undefined,
         }),
       });
+      setSelectedTemplate('');
       setModalOpen(false);
       await load();
       await loadStats();
@@ -387,6 +417,21 @@ export function TasksPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Suppression impossible', 'Pièce jointe');
     }
+  }
+
+  async function previewAttachment(att: TaskAttachment) {
+    const previewable = att.mimeType.startsWith('image/') || att.mimeType === 'application/pdf';
+    if (!previewable) { void downloadAttachment(att); return; }
+    const res = await fetch(`${API}/tasks/attachments/${att.id}/download`, { credentials: 'include' });
+    if (!res.ok) { toast.error('Impossible de charger le fichier', 'Aperçu'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    setPreview({ url, mime: att.mimeType, name: att.originalName });
+  }
+
+  function closePreview() {
+    if (preview) URL.revokeObjectURL(preview.url);
+    setPreview(null);
   }
 
   function activityLabel(a: AuditLogEntry) {
@@ -612,15 +657,34 @@ export function TasksPage() {
                     return (
                       <motion.tr key={t.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                         <td style={{ fontWeight: 700 }}>
-                          <div className="flex-center" style={{ gap: '0.5rem' }}>
-                            {isOverdue && <AlertTriangle size={14} color="var(--danger)" />}
-                            {t.title}
-                          </div>
-                          {t.description && (
-                            <div className="text-muted x-small" style={{ marginTop: '0.25rem' }}>
-                              {t.description}
+                          <button
+                            type="button"
+                            onClick={() => openDetails(t)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              width: '100%',
+                            }}
+                          >
+                            <div className="flex-center" style={{ gap: '0.5rem' }}>
+                              {isOverdue && <AlertTriangle size={14} color="var(--danger)" />}
+                              <span style={{ color: 'var(--text-main)', fontWeight: 700, textDecoration: 'underline', textDecorationColor: 'transparent', transition: 'text-decoration-color 0.15s' }}
+                                onMouseEnter={e => (e.currentTarget.style.textDecorationColor = 'var(--primary)')}
+                                onMouseLeave={e => (e.currentTarget.style.textDecorationColor = 'transparent')}
+                              >
+                                {t.title}
+                              </span>
+                              <Eye size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                             </div>
-                          )}
+                            {t.description && (
+                              <div className="text-muted x-small" style={{ marginTop: '0.25rem', textAlign: 'left' }}>
+                                {t.description.length > 80 ? t.description.slice(0, 80) + '…' : t.description}
+                              </div>
+                            )}
+                          </button>
                         </td>
                         <td className="small">
                           {lead ? (
@@ -687,13 +751,9 @@ export function TasksPage() {
                         </td>
                         <td>
                           <div className="row-gap">
-                            {canUpdate(t) ? (
+                            {canUpdate(t) && (
                               <button className="secondary small" onClick={() => openEdit(t)} style={{ padding: '0.4rem 0.6rem' }}>
                                 <Pencil size={14} /> Éditer
-                              </button>
-                            ) : (
-                              <button className="secondary small" onClick={() => openDetails(t)} style={{ padding: '0.4rem 0.6rem' }}>
-                                <Activity size={14} /> Détails
                               </button>
                             )}
                             {canUpdate(t) && (t.status === 'OPEN' || t.status === 'IN_PROGRESS') && (
@@ -867,9 +927,46 @@ export function TasksPage() {
             >
               <div className="flex-between" style={{ marginBottom: '1.5rem' }}>
                 <h2 style={{ margin: 0 }}>Nouvelle tâche</h2>
-                <button onClick={() => setModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)' }}>
+                <button onClick={() => { setSelectedTemplate(''); setModalOpen(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)' }}>
                   <X />
                 </button>
+              </div>
+
+              {/* Sélecteur de template */}
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
+                  Démarrer depuis un template (optionnel)
+                </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {TASK_TEMPLATES.map(tpl => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => applyTemplate(tpl.id)}
+                      style={{
+                        fontSize: '0.75rem',
+                        padding: '5px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: `1px solid ${selectedTemplate === tpl.id ? 'var(--primary)' : 'var(--glass-border)'}`,
+                        background: selectedTemplate === tpl.id ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+                        color: selectedTemplate === tpl.id ? 'var(--primary)' : 'var(--text-muted)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {tpl.label}
+                    </button>
+                  ))}
+                </div>
+                {selectedTemplate && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedTemplate(''); setTitle(''); setDescription(''); setType('TODO'); setPriority('MEDIUM'); setDueDate(''); }}
+                    style={{ marginTop: '6px', fontSize: '0.7rem', color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    Effacer le template
+                  </button>
+                )}
               </div>
 
               <form onSubmit={onCreate} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
@@ -931,7 +1028,7 @@ export function TasksPage() {
 
                 <div style={{ gridColumn: 'span 2', display: 'flex', gap: '1rem', marginTop: '0.75rem' }}>
                   <button type="submit" className="primary" style={{ flex: 1 }}>Créer</button>
-                  <button type="button" className="secondary" style={{ flex: 1 }} onClick={() => setModalOpen(false)}>Annuler</button>
+                  <button type="button" className="secondary" style={{ flex: 1 }} onClick={() => { setSelectedTemplate(''); setModalOpen(false); }}>Annuler</button>
                 </div>
               </form>
             </motion.div>
@@ -1090,6 +1187,11 @@ export function TasksPage() {
                             </div>
                           </div>
                           <div className="row-gap">
+                            {(a.mimeType.startsWith('image/') || a.mimeType === 'application/pdf') && (
+                              <button className="secondary small" onClick={() => void previewAttachment(a)} style={{ padding: '0.35rem 0.6rem' }}>
+                                Aperçu
+                              </button>
+                            )}
                             <button className="secondary small" onClick={() => void downloadAttachment(a)} style={{ padding: '0.35rem 0.6rem' }}>
                               Télécharger
                             </button>
@@ -1142,6 +1244,55 @@ export function TasksPage() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* ── Preview modal ──────────────────────────────────────────────────── */}
+      {preview && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 3000,
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={closePreview}
+        >
+          <div
+            style={{
+              position: 'relative', maxWidth: '90vw', maxHeight: '90vh',
+              background: 'var(--bg-card)', borderRadius: 'var(--radius-md)',
+              overflow: 'hidden', display: 'flex', flexDirection: 'column',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', borderBottom: '1px solid var(--glass-border)',
+            }}>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '400px' }}>
+                {preview.name}
+              </span>
+              <button className="secondary small" onClick={closePreview} style={{ padding: '4px 8px', marginLeft: '12px' }}>
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
+              {preview.mime.startsWith('image/') ? (
+                <img
+                  src={preview.url}
+                  alt={preview.name}
+                  style={{ maxWidth: '80vw', maxHeight: '75vh', display: 'block', borderRadius: 'var(--radius-sm)' }}
+                />
+              ) : (
+                <iframe
+                  src={preview.url}
+                  title={preview.name}
+                  style={{ width: '80vw', height: '75vh', border: 'none', borderRadius: 'var(--radius-sm)' }}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { TasksPage } from './pages/TasksPage';
+import { AuditPage } from './pages/AuditPage';
 import { AppLayout } from './components/AppLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider } from './components/ToastProvider';
@@ -140,6 +141,14 @@ function AppRoutes() {
           element={
             <Protected>
               <TasksPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/audit"
+          element={
+            <Protected roles={['ADMIN']}>
+              <AuditPage />
             </Protected>
           }
         />

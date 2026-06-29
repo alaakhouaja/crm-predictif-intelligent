@@ -43,4 +43,9 @@ export class DashboardController {
   getStageConversion(@CurrentUser() user: AuthUser) {
     return this.dashboard.getStageConversion(user.id, user.role);
   }
+
+  @Get('alerts')
+  getAlerts(@CurrentUser() user: AuthUser) {
+    return this.dashboard.getAlerts(user.id, user.role);
+  }
 }

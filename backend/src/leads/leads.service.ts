@@ -3,6 +3,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   InteractionType,
@@ -14,10 +16,7 @@ import {
 import { UserRole } from '../common/enums/user-role.enum';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  IaService,
-  type LeadPredictionFeatures,
-} from '../ia/ia.service';
+import { IaService } from '../ia/ia.service';
 import { CreateLeadDto } from './dto/create-lead.dto';
 import { UpdateLeadDto } from './dto/update-lead.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -25,7 +24,9 @@ import * as csv from 'csv-parser';
 import { Readable } from 'stream';
 
 @Injectable()
-export class LeadsService {
+export class LeadsService implements OnModuleInit {
+  private readonly logger = new Logger(LeadsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
@@ -197,6 +198,9 @@ export class LeadsService {
       );
     }
 
+    // Score the new lead in background — response is already sent
+    setImmediate(() => { void this.computeAndSaveScore(lead.id); });
+
     return lead;
   }
 
@@ -218,7 +222,7 @@ export class LeadsService {
       throw new BadRequestException('No user available to own webhook lead');
     }
 
-    return this.prisma.lead.create({
+    const lead = await this.prisma.lead.create({
       data: {
         firstName: dto.firstName,
         lastName: dto.lastName,
@@ -236,6 +240,10 @@ export class LeadsService {
       },
       include: this.leadInclude,
     });
+
+    setImmediate(() => { void this.computeAndSaveScore(lead.id); });
+
+    return lead;
   }
 
   async getActivity(user: AuthUser, id: string) {
@@ -274,9 +282,17 @@ export class LeadsService {
       dataOrigin: string;
     };
 
+    type DuplicateEntry = {
+      email: string;
+      firstName: string;
+      lastName: string;
+      reason: 'email' | 'phone' | 'name';
+    };
+
     const results: CsvLeadRow[] = [];
     let existingCount = 0;
     let errorCount = 0;
+    const duplicates: DuplicateEntry[] = [];
     const stream = Readable.from(fileBuffer).pipe(csv());
 
     for await (const row of stream) {
@@ -334,6 +350,12 @@ export class LeadsService {
 
       if (hasSeenEmail || hasSeenPhone) {
         existingCount += 1;
+        duplicates.push({
+          email: lead.email,
+          firstName: lead.firstName,
+          lastName: lead.lastName,
+          reason: hasSeenEmail ? 'email' : 'phone',
+        });
         continue;
       }
 
@@ -356,7 +378,7 @@ export class LeadsService {
                 ...(phones.length > 0 ? [{ phone: { in: phones } }] : []),
               ],
             },
-            select: { email: true, phone: true },
+            select: { email: true, phone: true, firstName: true, lastName: true },
           });
     const existingEmails = new Set(existing.map((x) => x.email.toLowerCase()));
     const existingPhones = new Set(
@@ -364,43 +386,104 @@ export class LeadsService {
         .map((x) => x.phone)
         .filter((phone): phone is string => Boolean(phone)),
     );
+    // Build a map from email → DB lead info for capturing duplicate details
+    const existingByEmail = new Map(existing.map((x) => [x.email.toLowerCase(), x]));
+    const existingByPhone = new Map(
+      existing
+        .filter((x): x is typeof x & { phone: string } => Boolean(x.phone))
+        .map((x) => [x.phone as string, x]),
+    );
 
     const toCreate: CsvLeadRow[] = [];
 
     for (const leadData of unique) {
-      const alreadyExists =
-        existingEmails.has(leadData.email) ||
-        (leadData.phone ? existingPhones.has(leadData.phone) : false);
-      if (alreadyExists) {
+      const emailMatch = existingEmails.has(leadData.email);
+      const phoneMatch = leadData.phone ? existingPhones.has(leadData.phone) : false;
+      if (emailMatch || phoneMatch) {
         existingCount += 1;
+        const dbLead = emailMatch
+          ? existingByEmail.get(leadData.email)
+          : existingByPhone.get(leadData.phone as string);
+        duplicates.push({
+          email: leadData.email,
+          firstName: dbLead?.firstName ?? leadData.firstName,
+          lastName: dbLead?.lastName ?? leadData.lastName,
+          reason: emailMatch ? 'email' : 'phone',
+        });
         continue;
       }
       toCreate.push(leadData);
     }
 
-    const runBatches = async (ops: Array<() => any>) => {
-      const chunkSize = 100;
-      for (let i = 0; i < ops.length; i += chunkSize) {
-        const chunk = ops.slice(i, i + chunkSize).map((fn) => fn());
-        await this.prisma.$transaction(chunk);
-      }
-    };
+    // Detect name duplicates among leads that passed email/phone checks
+    if (toCreate.length > 0) {
+      const namePairs = toCreate.map((l) => ({
+        firstName: l.firstName.toLowerCase(),
+        lastName: l.lastName.toLowerCase(),
+      }));
 
-    await runBatches(
-      toCreate.map((leadData) => () => this.prisma.lead.create({ data: leadData })),
-    );
-    const addedCount = toCreate.length;
+      const nameMatches = await this.prisma.lead.findMany({
+        where: {
+          OR: namePairs.map((p) => ({
+            firstName: { equals: p.firstName, mode: 'insensitive' as const },
+            lastName: { equals: p.lastName, mode: 'insensitive' as const },
+          })),
+        },
+        select: { firstName: true, lastName: true, email: true },
+      });
+
+      const nameMatchSet = new Set(
+        nameMatches.map((x) => `${x.firstName.toLowerCase()}|${x.lastName.toLowerCase()}`),
+      );
+
+      const toCreateFiltered: CsvLeadRow[] = [];
+      for (const leadData of toCreate) {
+        const key = `${leadData.firstName.toLowerCase()}|${leadData.lastName.toLowerCase()}`;
+        if (nameMatchSet.has(key)) {
+          existingCount += 1;
+          duplicates.push({
+            email: leadData.email,
+            firstName: leadData.firstName,
+            lastName: leadData.lastName,
+            reason: 'name',
+          });
+        } else {
+          toCreateFiltered.push(leadData);
+        }
+      }
+      // Replace toCreate with filtered list
+      toCreate.length = 0;
+      toCreate.push(...toCreateFiltered);
+    }
+
+    const createdIds: string[] = [];
+    const chunkSize = 100;
+    for (let i = 0; i < toCreate.length; i += chunkSize) {
+      const chunk = toCreate.slice(i, i + chunkSize);
+      const results = await this.prisma.$transaction(
+        chunk.map((leadData) => this.prisma.lead.create({ data: leadData, select: { id: true } })),
+      );
+      for (const r of results) createdIds.push(r.id);
+    }
+    const addedCount = createdIds.length;
 
     await this.notifications.createForAll(
       'Import de leads termine',
       `${user.email} a lance un import: ${addedCount} lead(s) ajoute(s), ${existingCount} deja existant(s), ${errorCount} erreur(s).`,
     );
 
+    // Score all newly created leads in background
+    if (createdIds.length > 0) {
+      this.logger.log(`[IA] Queuing background scoring for ${createdIds.length} imported lead(s)…`);
+      setImmediate(() => { void this.scoreLeadsInBackground(createdIds); });
+    }
+
     return {
       message: `Import termine : ${addedCount} lead(s) ajoute(s), ${existingCount} deja existant(s), ${errorCount} erreur(s).`,
       addedCount,
       existingCount,
       errorCount,
+      duplicates,
     };
   }
 
@@ -641,135 +724,139 @@ export class LeadsService {
     );
   }
 
+  // ─── Lifecycle ────────────────────────────────────────────────────────────────
+
+  onModuleInit() {
+    // Score leads that have no score yet — runs in background at startup
+    setImmediate(() => { void this.scoreUnscoredLeadsOnStartup(); });
+  }
+
+  private async scoreUnscoredLeadsOnStartup(): Promise<void> {
+    try {
+      const leads = await this.prisma.lead.findMany({
+        where: { score: null, isAnonymized: false },
+        select: { id: true },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+
+      if (leads.length === 0) return;
+
+      this.logger.log(`[IA] Scoring ${leads.length} unscored lead(s) on startup…`);
+
+      for (const { id } of leads) {
+        await this.computeAndSaveScore(id);
+        await new Promise((r) => setTimeout(r, 400));
+      }
+
+      this.logger.log('[IA] Startup scoring complete.');
+    } catch (err) {
+      this.logger.warn(`[IA] Startup scoring aborted: ${String(err)}`);
+    }
+  }
+
+  // ─── Background scoring ────────────────────────────────────────────────────
+
+  /**
+   * Fetches lead data, calls Ollama, persists score.
+   * Never throws — errors are logged and swallowed so callers can fire-and-forget.
+   */
+  private async computeAndSaveScore(leadId: string) {
+    try {
+      const lead = await this.prisma.lead.findUnique({
+        where: { id: leadId },
+        include: this.leadInclude,
+      });
+
+      if (!lead || lead.isAnonymized) return null;
+
+      const now = new Date();
+
+      const [interactions, tasks] = await Promise.all([
+        this.prisma.interaction.findMany({
+          where: { leadId },
+          select: { type: true, createdAt: true },
+        }),
+        this.prisma.task.findMany({
+          where: { leadId },
+          select: { status: true, dueDate: true, completedAt: true, updatedAt: true, createdAt: true },
+        }),
+      ]);
+
+      const lastInteractionAt =
+        interactions.length > 0
+          ? new Date(Math.max(...interactions.map((i) => i.createdAt.getTime())))
+          : lead.createdAt;
+
+      const lastTaskActivityAt =
+        tasks.length > 0
+          ? new Date(Math.max(...tasks.map((t) => (t.completedAt ?? t.updatedAt ?? t.createdAt).getTime())))
+          : lead.createdAt;
+
+      const lastActivityAt = new Date(
+        Math.max(lead.updatedAt.getTime(), lastInteractionAt.getTime(), lastTaskActivityAt.getTime()),
+      );
+
+      // Cache key changes whenever lead data changes → auto-invalidation
+      const cacheKey = `${leadId}:${lastActivityAt.getTime()}:${lead.stage}`;
+
+      const prediction = await this.ia.predictLead({
+        firstName: lead.firstName,
+        lastName: lead.lastName,
+        company: lead.company ?? null,
+        source: lead.source ?? null,
+        stage: lead.stage,
+        notes: lead.notes ?? null,
+        interactionCount: interactions.length,
+        callCount: interactions.filter((i) => i.type === InteractionType.CALL).length,
+        emailCount: interactions.filter((i) => i.type === InteractionType.EMAIL).length,
+        meetingCount: interactions.filter((i) => i.type === InteractionType.MEETING).length,
+        taskCount: tasks.length,
+        completedTaskCount: tasks.filter((t) => t.status === TaskStatus.DONE).length,
+        overdueTaskCount: tasks.filter(
+          (t) =>
+            (t.status === TaskStatus.OPEN || t.status === TaskStatus.IN_PROGRESS) &&
+            !!t.dueDate &&
+            t.dueDate.getTime() < now.getTime(),
+        ).length,
+        daysSinceCreation: this.daysBetween(lead.createdAt, now),
+        daysSinceLastActivity: this.daysBetween(lastActivityAt, now),
+      }, cacheKey);
+
+      await this.prisma.lead.update({
+        where: { id: leadId },
+        data: {
+          score: prediction.score / 10,
+          conversionProbability: prediction.probability,
+        },
+      });
+
+      this.logger.log(`[IA] Lead ${leadId} scored: ${prediction.score}/100`);
+      return prediction;
+    } catch (err) {
+      this.logger.warn(`[IA] Scoring failed for lead ${leadId}: ${String(err)}`);
+      return null;
+    }
+  }
+
+  private async scoreLeadsInBackground(leadIds: string[]): Promise<void> {
+    for (const id of leadIds) {
+      await this.computeAndSaveScore(id);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+
+  // ─── Public prediction endpoint ────────────────────────────────────────────
+
   async getPrediction(user: AuthUser, id: string) {
-    const lead = await this.findOne(user, id);
-    const now = new Date();
+    // Permission check only — actual work delegated to computeAndSaveScore
+    await this.findOne(user, id);
 
-    const [interactions, tasks] = await Promise.all([
-      this.prisma.interaction.findMany({
-        where: { leadId: id },
-        select: {
-          type: true,
-          createdAt: true,
-        },
-      }),
-      this.prisma.task.findMany({
-        where: { leadId: id },
-        select: {
-          type: true,
-          status: true,
-          progress: true,
-          dueDate: true,
-          completedAt: true,
-          updatedAt: true,
-          createdAt: true,
-        },
-      }),
-    ]);
-
-    const interactionCount = interactions.length;
-    const callCount = interactions.filter(
-      (interaction) => interaction.type === InteractionType.CALL,
-    ).length;
-    const emailInteractionCount = interactions.filter(
-      (interaction) => interaction.type === InteractionType.EMAIL,
-    ).length;
-    const meetingInteractionCount = interactions.filter(
-      (interaction) => interaction.type === InteractionType.MEETING,
-    ).length;
-
-    const taskCount = tasks.length;
-    const completedTaskCount = tasks.filter(
-      (task) => task.status === TaskStatus.DONE,
-    ).length;
-    const openTaskCount = tasks.filter(
-      (task) =>
-        task.status === TaskStatus.OPEN || task.status === TaskStatus.IN_PROGRESS,
-    ).length;
-    const overdueTaskCount = tasks.filter(
-      (task) =>
-        (task.status === TaskStatus.OPEN ||
-          task.status === TaskStatus.IN_PROGRESS) &&
-        !!task.dueDate &&
-        task.dueDate.getTime() < now.getTime(),
-    ).length;
-    const callTaskCount = tasks.filter(
-      (task) => task.type === TaskType.CALL,
-    ).length;
-    const emailTaskCount = tasks.filter(
-      (task) => task.type === TaskType.EMAIL,
-    ).length;
-    const meetingTaskCount = tasks.filter(
-      (task) => task.type === TaskType.MEETING,
-    ).length;
-    const todoTaskCount = tasks.filter(
-      (task) => task.type === TaskType.TODO,
-    ).length;
-    const avgTaskProgress =
-      taskCount > 0
-        ? Number(
-            (
-              tasks.reduce((sum, task) => sum + task.progress, 0) / taskCount
-            ).toFixed(2),
-          )
-        : 0;
-
-    const lastInteractionAt =
-      interactions.length > 0
-        ? new Date(
-            Math.max(
-              ...interactions.map((interaction) => interaction.createdAt.getTime()),
-            ),
-          )
-        : lead.createdAt;
-
-    const lastTaskActivityAt =
-      tasks.length > 0
-        ? new Date(
-            Math.max(
-              ...tasks.map((task) =>
-                (task.completedAt ?? task.updatedAt ?? task.createdAt).getTime(),
-              ),
-            ),
-          )
-        : lead.createdAt;
-
-    const lastActivityAt = new Date(
-      Math.max(
-        lead.updatedAt.getTime(),
-        lastInteractionAt.getTime(),
-        lastTaskActivityAt.getTime(),
-      ),
-    );
-
-    const features: LeadPredictionFeatures = {
-      source: lead.source ?? 'unknown',
-      has_company: lead.company ? 1 : 0,
-      owner_role: lead.owner.role,
-      interaction_count: interactionCount,
-      call_count: callCount,
-      email_interaction_count: emailInteractionCount,
-      meeting_interaction_count: meetingInteractionCount,
-      task_count: taskCount,
-      completed_task_count: completedTaskCount,
-      open_task_count: openTaskCount,
-      overdue_task_count: overdueTaskCount,
-      call_task_count: callTaskCount,
-      email_task_count: emailTaskCount,
-      meeting_task_count: meetingTaskCount,
-      todo_task_count: todoTaskCount,
-      avg_task_progress: avgTaskProgress,
-      days_since_last_activity: this.daysBetween(lastActivityAt, now),
-      days_since_creation: this.daysBetween(lead.createdAt, now),
-    };
-
-    const prediction = await this.ia.predictLead(features);
-
-    return {
-      probability: prediction.probability,
-      score: prediction.score,
-      label: prediction.label,
-    };
+    const prediction = await this.computeAndSaveScore(id);
+    if (!prediction) {
+      throw new BadRequestException('Service IA indisponible, veuillez réessayer.');
+    }
+    return prediction;
   }
 
   async findOne(user: AuthUser, id: string) {

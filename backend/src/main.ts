@@ -32,8 +32,8 @@ async function bootstrap() {
   if (process.env.NODE_ENV !== 'production') {
     const swagger = new DocumentBuilder()
       .setTitle('CRM Prédictif API')
-      .setDescription('Partie 1 — Auth JWT, rôles, gestion des leads')
-      .setVersion('1.0')
+      .setDescription('API complète — Auth JWT, Leads, Tâches, Dashboard, IA (Ollama), Notifications temps réel')
+      .setVersion('2.0')
       .addBearerAuth()
       .build();
     SwaggerModule.setup('api', app, SwaggerModule.createDocument(app, swagger));

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { LeadStage } from '@prisma/client';
+import { LeadStage, TaskPriority, TaskStatus } from '@prisma/client';
 import { UserRole } from '../common/enums/user-role.enum';
 
 @Injectable()
@@ -182,6 +182,91 @@ export class DashboardService {
     return Array.from(trendMap.values()).reverse();
   }
 
+  async getAlerts(userId: string, userRole: UserRole) {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+    const now = new Date();
+
+    const leadWhere =
+      userRole === UserRole.SALES
+        ? {
+            ownerId: userId,
+            isAnonymized: false,
+            updatedAt: { lt: sevenDaysAgo },
+            stage: { notIn: [LeadStage.Gagne, LeadStage.Perdu] as LeadStage[] },
+          }
+        : {
+            isAnonymized: false,
+            updatedAt: { lt: sevenDaysAgo },
+            stage: { notIn: [LeadStage.Gagne, LeadStage.Perdu] as LeadStage[] },
+          };
+
+    const taskWhere =
+      userRole === UserRole.SALES
+        ? {
+            assignedToId: userId,
+            status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+            priority: TaskPriority.HIGH,
+            dueDate: { lt: now },
+          }
+        : {
+            status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+            priority: TaskPriority.HIGH,
+            dueDate: { lt: now },
+          };
+
+    const [leads, tasks] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: leadWhere,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          updatedAt: true,
+          stage: true,
+          owner: { select: { firstName: true, lastName: true, email: true } },
+        },
+        orderBy: { updatedAt: 'asc' },
+        take: 10,
+      }),
+      this.prisma.task.findMany({
+        where: taskWhere,
+        select: {
+          id: true,
+          title: true,
+          dueDate: true,
+          assignedTo: { select: { firstName: true, lastName: true, email: true } },
+        },
+        orderBy: { dueDate: 'asc' },
+        take: 10,
+      }),
+    ]);
+
+    return {
+      leadsWithoutActivity: leads.map((lead) => ({
+        id: lead.id,
+        name: `${lead.firstName} ${lead.lastName}`.trim(),
+        ownerName:
+          `${lead.owner.firstName || ''} ${lead.owner.lastName || ''}`.trim() ||
+          lead.owner.email,
+        daysSinceActivity: Math.floor(
+          (Date.now() - lead.updatedAt.getTime()) / 86400000,
+        ),
+        stage: lead.stage,
+      })),
+      overdueHighPriorityTasks: tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        assigneeName: task.assignedTo
+          ? `${task.assignedTo.firstName || ''} ${task.assignedTo.lastName || ''}`.trim() ||
+            task.assignedTo.email
+          : 'Non assigné',
+        daysOverdue: task.dueDate
+          ? Math.floor((Date.now() - task.dueDate.getTime()) / 86400000)
+          : 0,
+      })),
+    };
+  }
+
   async getRecentActivity(userId: string, userRole: UserRole, limit: number = 10) {
     const canSeeAll = userRole !== UserRole.SALES;
     const ownerFilter = canSeeAll ? {} : { userId };
@@ -204,6 +289,26 @@ export class DashboardService {
       }),
     ]);
 
+    // Résoudre les noms des leads pour les entrées d'audit (entityId = UUID lead)
+    const auditLeadIds = [...new Set(leadUpdates.map((a) => a.entityId))];
+    const auditLeads = auditLeadIds.length > 0
+      ? await this.prisma.lead.findMany({
+          where: { id: { in: auditLeadIds } },
+          select: { id: true, firstName: true, lastName: true, email: true },
+        })
+      : [];
+    const leadNameMap = new Map(
+      auditLeads.map((l) => [l.id, `${l.firstName} ${l.lastName}`.trim() || l.email]),
+    );
+
+    const actionLabel: Record<string, string> = {
+      CREATE: 'Lead créé',
+      UPDATE: 'Lead modifié',
+      DELETE: 'Lead supprimé',
+      ARCHIVE: 'Lead archivé',
+      UNARCHIVE: 'Lead restauré',
+    };
+
     const activities = [
       ...interactions.map((i) => ({
         id: i.id,
@@ -219,9 +324,9 @@ export class DashboardService {
         id: a.id,
         type: 'update',
         subtype: a.action,
-        content: a.newValue ? `Modifié: ${JSON.stringify(a.newValue)}` : a.action,
+        content: actionLabel[a.action] ?? a.action,
         user: `${a.user.firstName || ''} ${a.user.lastName || ''}`.trim(),
-        lead: a.entityId,
+        lead: leadNameMap.get(a.entityId) ?? 'Lead inconnu',
         createdAt: a.createdAt,
       })),
     ];
